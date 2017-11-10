@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+# LLVM stuff
+*.bc
+*.ll
