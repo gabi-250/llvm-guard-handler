@@ -1,10 +1,10 @@
 #include <stdio.h>
 
 void f(int x) {
-   if (x < 2) {
+   if (x < 3) {
       printf("%d\n", x);
    } else {
-      printf("greater than 0\n");
+      printf("x >= 3\n");
    }
 }
 

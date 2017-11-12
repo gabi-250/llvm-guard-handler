@@ -1,58 +1,56 @@
-#include <cstdio>
-#include <llvm-c/Target.h>
-#include <llvm-c/TargetMachine.h>
-#include <llvm-c/ExecutionEngine.h>
-#include <llvm-c/Object.h>
-#include <llvm-c/Core.h>
-#include <llvm-c/BitReader.h>
-#include <llvm-c/BitWriter.h>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+#include <llvm/ADT/StringRef.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IRReader/IRReader.h>
 #include <llvm/CodeGen/MachineFunction.h>
+#include <llvm/Support/MemoryBuffer.h>
+#include <llvm/Support/SourceMgr.h>
+#include <llvm/ExecutionEngine/ExecutionEngine.h>
+#include <llvm/ADT/APInt.h>
+#include <llvm/ExecutionEngine/GenericValue.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/ExecutionEngine/MCJIT.h>
 
-LLVMModuleRef create_module(char *filename) {
-   LLVMMemoryBufferRef buf;
-   char *error = NULL;
-   if (LLVMCreateMemoryBufferWithContentsOfFile(filename, &buf, &error)) {
-      printf("%s\n", error);
-      exit(1);
-   }
+using namespace llvm;
 
-   LLVMModuleRef mod = LLVMModuleCreateWithName("test");
-   if (LLVMParseBitcode(buf, &mod, &error)) {
-      printf("%s", error);
-      exit(1);
-   }
-   return mod;
+std::unique_ptr<Module> getModule(const std::string &filename, LLVMContext &ctx) {
+    SMDiagnostic error;
+    std::unique_ptr<Module> mod = parseIRFile(filename, error, ctx);
+    if (!mod) {
+        std::cerr << error.getMessage().str() << '\n';
+        return nullptr;
+    }
+    return mod;
 }
 
 int main(int argc, char **argv) {
-   char *error = NULL;
-   LLVMMemoryBufferRef out_buf;
-   if (argc < 2) {
-      printf("Please provide an input file\n");
-      exit(1);
-   }
+    if (argc < 2) {
+        std::cerr << "Please enter an input file\n";
+        return 1;
+    }
+    LLVMContext ctx;
+    std::unique_ptr<Module> mod = getModule(argv[1], ctx);
+    InitializeNativeTarget();
+    InitializeNativeTargetAsmPrinter();
+    std::string error;
+    ExecutionEngine *engine = EngineBuilder(std::move(mod))
+          .setEngineKind(EngineKind::JIT).setErrorStr(&error)
+          .create();
+    if (!engine) {
+        std::cerr<< error <<'\n';
+        exit(1);
+    }
+    Function *fun = engine->FindFunctionNamed("f");
 
-   LLVMModuleRef mod = create_module(argv[1]);
-   LLVMLinkInMCJIT();
-   LLVMInitializeNativeTarget();
-   LLVMInitializeNativeAsmPrinter();
-
-   LLVMExecutionEngineRef ee;
-   if (LLVMCreateExecutionEngineForModule(&ee, mod, &error)) {
-      printf("%s\n", error);
-      exit(1);
-   }
-   LLVMTargetMachineRef t = LLVMGetExecutionEngineTargetMachine(ee);
-   if (!t) {
-      printf("Failed to extract the target machine\n");
-      exit(1);
-   }
-   LLVMTargetMachineEmitToMemoryBuffer(t, mod, LLVMObjectFile, &error, &out_buf);
-   LLVMValueRef fun = LLVMGetNamedFunction(mod, "f");
-
-   LLVMGenericValueRef args[] = {
-       LLVMCreateGenericValueOfInt(LLVMInt32Type(), 10, 1)
-   };
-   LLVMRunFunction(ee, fun, 1, args);
-   return 0;
+    std::vector<GenericValue> args;
+    GenericValue val;
+    val.IntVal = APInt(32, 5); // a 32 bit value (5)
+    args.push_back(val);
+    GenericValue ret = engine->runFunction(fun, args);
+    std::cout << engine->getDataLayout().getStringRepresentation() << '\n';
+    return 0;
 }
