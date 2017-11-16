@@ -34,3 +34,5 @@
 # LLVM stuff
 *.bc
 *.ll
+
+build/*
