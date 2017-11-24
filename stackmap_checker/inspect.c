@@ -29,7 +29,7 @@ uint8_t* code_section_cb (void *opaque, uintptr_t size,
    if (!strcmp(section_name, ".llvm_stackmaps")) {
       stack_map_t **ptr = (uint8_t **) opaque;
       *ptr = (uint8_t *)start;
-      printf("Code %s at %p\n", section_name, start);
+      printf("%s at %p\n", section_name, (void *)start);
    }
 
    return start;
@@ -45,7 +45,6 @@ void destroy_cb(void *opaque) {
 }
 
 LLVMBool finalize_cb(void *opaque, char **error) {
-   printf("Finalizing\n");
    return 0;
 }
 
@@ -95,5 +94,41 @@ int main(int argc, char **argv) {
    };
    LLVMRunFunction(ee, fun, 1, args);
    stack_map_t *stack_map = create_stack_map(stack_map_addr);
+   printf("Version: %u\n", stack_map->version);
+   printf("Num func: %u\n", stack_map->num_func);
+   printf("Num rec: %u\n", stack_map->num_rec);
+   printf("Num const: %u\n", stack_map->num_const);
+   printf("Records:\n");
+   for (size_t i = 0; i < stack_map->num_func; ++i) {
+      stack_size_record_t *rec = stack_map->stack_size_records + i;
+      printf("Fun addr: %p\n", (void *)rec->fun_addr);
+      printf("Stack size: %lu\n", rec->stack_size);
+      printf("Record count: %lu\n", rec->record_count);
+   }
+
+   for (size_t i = 0; i < stack_map->num_rec; ++i) {
+      printf("* Record num: %zu\n", i);
+      stack_map_record_t *rec = stack_map->sm_records + i;
+      printf("\tPatchpoint id: %lu\n", rec->patchpoint_id);
+      printf("\tInstruction offset: %u\n", rec->instruction_offset);
+      printf("\tNum locations: %u\n", rec->num_locations);
+      for (size_t j = 0; j < rec->num_locations; ++j) {
+         printf("\t\tLocation %zu\n", j);
+         location_t *loc = rec->locations + j;
+         printf("\t\tKind %u\n", loc->kind);
+         printf("\t\tSize %u\n", loc->size);
+         printf("\t\tOffset %u\n", loc->offset);
+      }
+      for (int j = 0; j < rec->num_liveouts; ++j) {
+         printf("\t\tLiveout: %uz\n", j);
+         liveout_t *liveout = rec->liveouts + j;
+         printf("\t\tReg num: %u\n", liveout->dwarf_reg_num);
+         printf("\t\tSize: %u\n", liveout->size);
+      }
+   }
+   LLVMDisposeExecutionEngine(ee);
+   LLVMDisposeGenericValue(args[0]);
+   free_stack_map(stack_map);
+
    return 0;
 }

@@ -16,7 +16,7 @@ typedef struct LiveOut {
    uint16_t dwarf_reg_num;
    uint8_t reserved;
    uint8_t size;
-} live_out_t;
+} liveout_t;
 
 typedef struct StackMapRecord {
    uint64_t patchpoint_id;
@@ -24,11 +24,8 @@ typedef struct StackMapRecord {
    uint16_t reserved;
    uint16_t num_locations;
    location_t *locations;
-   uint32_t padding;
-   uint16_t padding2;
    uint16_t num_liveouts;
-   live_out_t *liveouts;
-   uint32_t padding3;
+   liveout_t *liveouts;
 } stack_map_record_t;
 
 typedef struct StackSizeRecord {
@@ -54,5 +51,6 @@ typedef struct StackMap {
 } stack_map_t;
 
 stack_map_t* create_stack_map(uint8_t*);
+void free_stack_map(stack_map_t *);
 
 #endif // STMAP_H
