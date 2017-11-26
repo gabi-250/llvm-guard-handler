@@ -55,12 +55,14 @@ LLVMModuleRef create_module(char *filename) {
       printf("%s\n", error);
       return NULL;
    }
-
-   LLVMModuleRef mod = LLVMModuleCreateWithName("test");
+   LLVMDisposeMessage(error);
+   LLVMModuleRef mod;
    if (LLVMParseBitcode(buf, &mod, &error)) {
       printf("%s\n", error);
       return NULL;
    }
+   LLVMDisposeMessage(error);
+   LLVMDisposeMemoryBuffer(buf);
    return mod;
 }
 
@@ -83,7 +85,8 @@ int main(int argc, char **argv) {
             destroy_cb
          );
    LLVMExecutionEngineRef ee;
-   struct LLVMMCJITCompilerOptions options = { 0, LLVMCodeModelDefault, 1, 0, mm_ref };
+   struct LLVMMCJITCompilerOptions options = { 0, LLVMCodeModelDefault,
+                                               1, 0, mm_ref };
    LLVMCreateMCJITCompilerForModule(&ee, mod, &options, sizeof(options),
                                     &error);
 
@@ -92,7 +95,8 @@ int main(int argc, char **argv) {
    LLVMGenericValueRef args[] = {
        LLVMCreateGenericValueOfInt(LLVMInt32Type(), 10, 1)
    };
-   LLVMRunFunction(ee, fun, 1, args);
+   LLVMGenericValueRef ret_val = LLVMRunFunction(ee, fun, 1, args);
+   LLVMDisposeGenericValue(ret_val);
    stack_map_t *stack_map = create_stack_map(stack_map_addr);
    printf("Version: %u\n", stack_map->version);
    printf("Num func: %u\n", stack_map->num_func);
@@ -128,7 +132,7 @@ int main(int argc, char **argv) {
    }
    LLVMDisposeExecutionEngine(ee);
    LLVMDisposeGenericValue(args[0]);
+   LLVMDisposeMessage(error);
    free_stack_map(stack_map);
-
    return 0;
 }
