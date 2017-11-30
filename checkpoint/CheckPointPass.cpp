@@ -1,5 +1,6 @@
 #include <vector>
 #include <llvm/Pass.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Function.h>
@@ -21,36 +22,34 @@ namespace {
     CheckPointPass() : FunctionPass(id) {}
 
     virtual bool doInitialization(Module &mod) {
-      if (mod.getFunction("llvm.experimental.stackmap") == nullptr) {
-        LLVMContext &ctx = mod.getContext();
-        Type* i64 = Type::getInt64Ty(ctx);
-        Type* i32 = Type::getInt32Ty(ctx);
-        std::vector<Type*> types = std::vector<Type*> { i64, i32 };
-        FunctionType* signature = FunctionType::get(Type::getVoidTy(ctx),
-                                                    types, true);
-        Function *stackmap_func = Function::Create(signature,
-              Function::ExternalLinkage, "llvm.experimental.stackmap", &mod);
-        return true;
-      }
       return false;
     }
 
     virtual bool runOnFunction(Function &fun) {
-      errs() << "Function: " <<  fun.getName() << '\n';
+      errs() << "Running on function: " <<  fun.getName() << '\n';
       bool modified = false;
+      Value * ret = nullptr;
+      if (fun.getName() == "f") {
+        IRBuilder<> builder(fun.getEntryBlock().getFirstNonPHI());
+        ret = builder.CreateCall(Intrinsic::getDeclaration(
+            fun.getParent(), Intrinsic::addressofreturnaddress));
+        errs() << "Address of return address of function "
+               <<  fun.getName() << ": "<< ret << '\n';
+        modified = true;
+      }
       for (auto &bb : fun) {
         for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
           if (isJump(it->getOpcode())) {
             LLVMContext &ctx = bb.getContext();
-            Type* i64 = Type::getInt64Ty(ctx);
-            Type* i32 = Type::getInt32Ty(ctx);
             Module *mod = fun.getParent();
             IRBuilder<> builder(&bb, it);
-            auto args = std::vector<Value*> { ConstantInt::get(i64, sm_id++),
-                                              ConstantInt::get(i32, 0) };
-            auto sm = builder.CreateCall(
-                mod->getFunction("llvm.experimental.stackmap"), args);
-            errs() << it->getOpcodeName() <<' ' << it->getOpcode() << '\n';
+            auto args = std::vector<Value*> { builder.getInt64(sm_id++),
+                                              builder.getInt32(0) };
+            if (fun.getName() == "f" && ret) {
+              args.push_back(ret);
+            }
+            auto sm = builder.CreateCall(Intrinsic::getDeclaration(
+                  fun.getParent(), Intrinsic::experimental_stackmap), args);
             modified = true;
           }
         }
