@@ -66,38 +66,7 @@ LLVMModuleRef create_module(char *filename) {
    return mod;
 }
 
-int main(int argc, char **argv) {
-   char *error = NULL;
-   if (argc < 2) {
-      printf("Please provide an input file\n");
-      return 1;
-   }
-   LLVMModuleRef mod = create_module(argv[1]);
-   LLVMLinkInMCJIT();
-   LLVMInitializeNativeTarget();
-   LLVMInitializeNativeAsmPrinter();
-   uint8_t *stack_map_addr = NULL;
-   LLVMMCJITMemoryManagerRef mm_ref = LLVMCreateSimpleMCJITMemoryManager(
-            &stack_map_addr,
-            code_section_cb,
-            data_section_cb,
-            finalize_cb,
-            destroy_cb
-         );
-   LLVMExecutionEngineRef ee;
-   struct LLVMMCJITCompilerOptions options = { 0, LLVMCodeModelDefault,
-                                               1, 0, mm_ref };
-   LLVMCreateMCJITCompilerForModule(&ee, mod, &options, sizeof(options),
-                                    &error);
-
-   LLVMValueRef fun = LLVMGetNamedFunction(mod, "f");
-
-   LLVMGenericValueRef args[] = {
-       LLVMCreateGenericValueOfInt(LLVMInt32Type(), 10, 1)
-   };
-   LLVMGenericValueRef ret_val = LLVMRunFunction(ee, fun, 1, args);
-   LLVMDisposeGenericValue(ret_val);
-   stack_map_t *stack_map = create_stack_map(stack_map_addr);
+void inspect_stackmap(stack_map_t *stack_map) {
    printf("Version: %u\n", stack_map->version);
    printf("Num func: %u\n", stack_map->num_func);
    printf("Num rec: %u\n", stack_map->num_rec);
@@ -122,6 +91,7 @@ int main(int argc, char **argv) {
          printf("\t\tKind %u\n", loc->kind);
          printf("\t\tSize %u\n", loc->size);
          printf("\t\tOffset %u\n", loc->offset);
+         printf("\t\tReg num: %u\n", loc->dwarf_reg_num);
       }
       for (int j = 0; j < rec->num_liveouts; ++j) {
          printf("\t\tLiveout: %uz\n", j);
@@ -130,8 +100,50 @@ int main(int argc, char **argv) {
          printf("\t\tSize: %u\n", liveout->size);
       }
    }
+   uint64_t return_addr_addr;
+   asm("mov %%rax,%0" : "=r"(return_addr_addr) : :);
+   printf("rax: %p\n", return_addr_addr);
+   uint64_t return_addr_addr2;
+   asm("mov %%rbx,%0" : "=r"(return_addr_addr) : :);
+   printf("rbx: %p\n", return_addr_addr);
+   asm("mov %%rcx,%0" : "=r"(return_addr_addr) : :);
+   printf("rcx: %p\n", return_addr_addr);
+   asm("mov %%rdx,%0" : "=r"(return_addr_addr) : :);
+   printf("rdx: %p\n",  return_addr_addr);
+}
+
+int main(int argc, char **argv) {
+   char *error = NULL;
+   if (argc < 2) {
+      printf("Please provide an input file\n");
+      return 1;
+   }
+   LLVMModuleRef mod = create_module(argv[1]);
+   LLVMLinkInMCJIT();
+   LLVMInitializeNativeTarget();
+   LLVMInitializeNativeAsmPrinter();
+   uint8_t *stack_map_addr = NULL;
+   LLVMMCJITMemoryManagerRef mm_ref = LLVMCreateSimpleMCJITMemoryManager(
+            &stack_map_addr,
+            code_section_cb,
+            data_section_cb,
+            finalize_cb,
+            destroy_cb
+         );
+   LLVMExecutionEngineRef ee;
+   struct LLVMMCJITCompilerOptions options = { 0, LLVMCodeModelDefault,
+                                               1, 0, mm_ref };
+   LLVMCreateMCJITCompilerForModule(&ee, mod, &options, sizeof(options),
+                                    &error);
+
+   LLVMValueRef fun = LLVMGetNamedFunction(mod, "main");
+
+   LLVMGenericValueRef ret_val = LLVMRunFunctionAsMain(ee, fun, argc,
+                                                       argv, NULL);
+   stack_map_t *stack_map = create_stack_map(stack_map_addr);
+   inspect_stackmap(stack_map);
+   LLVMDisposeGenericValue(ret_val);
    LLVMDisposeExecutionEngine(ee);
-   LLVMDisposeGenericValue(args[0]);
    LLVMDisposeMessage(error);
    free_stack_map(stack_map);
    return 0;

@@ -7,7 +7,7 @@ typedef struct Location {
     uint8_t kind; // Register | Direct | Indirect | Constant | ConstantIndex
     uint8_t reserved;
     uint16_t size;
-    uint16_t dward_reg_num;
+    uint16_t dwarf_reg_num;
     uint16_t reserved2;
     uint32_t offset;
 } location_t;
