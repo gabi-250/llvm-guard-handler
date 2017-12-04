@@ -27,8 +27,8 @@ uint8_t* code_section_cb (void *opaque, uintptr_t size,
    }
 
    if (!strcmp(section_name, ".llvm_stackmaps")) {
-      stack_map_t **ptr = (uint8_t **) opaque;
-      *ptr = (uint8_t *)start;
+      stack_map_t **ptr = (stack_map_t **) opaque;
+      *ptr = (stack_map_t *)start;
       printf("%s at %p\n", section_name, (void *)start);
    }
 
@@ -46,6 +46,11 @@ void destroy_cb(void *opaque) {
 
 LLVMBool finalize_cb(void *opaque, char **error) {
    return 0;
+}
+
+void guard_failure() {
+   // XXX
+   printf("guard failure!\n");
 }
 
 LLVMModuleRef create_module(char *filename) {
@@ -94,22 +99,12 @@ void inspect_stackmap(stack_map_t *stack_map) {
          printf("\t\tReg num: %u\n", loc->dwarf_reg_num);
       }
       for (int j = 0; j < rec->num_liveouts; ++j) {
-         printf("\t\tLiveout: %uz\n", j);
+         printf("\t\tLiveout: %d\n", j);
          liveout_t *liveout = rec->liveouts + j;
          printf("\t\tReg num: %u\n", liveout->dwarf_reg_num);
          printf("\t\tSize: %u\n", liveout->size);
       }
    }
-   uint64_t return_addr_addr;
-   asm("mov %%rax,%0" : "=r"(return_addr_addr) : :);
-   printf("rax: %p\n", return_addr_addr);
-   uint64_t return_addr_addr2;
-   asm("mov %%rbx,%0" : "=r"(return_addr_addr) : :);
-   printf("rbx: %p\n", return_addr_addr);
-   asm("mov %%rcx,%0" : "=r"(return_addr_addr) : :);
-   printf("rcx: %p\n", return_addr_addr);
-   asm("mov %%rdx,%0" : "=r"(return_addr_addr) : :);
-   printf("rdx: %p\n",  return_addr_addr);
 }
 
 int main(int argc, char **argv) {
@@ -130,19 +125,32 @@ int main(int argc, char **argv) {
             finalize_cb,
             destroy_cb
          );
+   LLVMValueRef gf_addr = LLVMGetNamedGlobal(mod, "gf_addr");
+   LLVMTypeRef i8 = LLVMInt8Type();
+   LLVMTypeRef i8_ptr = LLVMPointerType(i8, 0);
+   LLVMContextRef ctx = LLVMGetModuleContext(mod);
+   LLVMValueRef c = LLVMConstIntToPtr(LLVMConstInt(LLVMInt64TypeInContext(ctx),
+                                                   (uint64_t)guard_failure, 0),
+                                      i8_ptr);
+   LLVMSetInitializer(gf_addr, c);
    LLVMExecutionEngineRef ee;
-   struct LLVMMCJITCompilerOptions options = { 0, LLVMCodeModelDefault,
-                                               1, 0, mm_ref };
+   struct LLVMMCJITCompilerOptions options;
+   LLVMInitializeMCJITCompilerOptions(&options, sizeof(options));
+   options.MCJMM = mm_ref;
    LLVMCreateMCJITCompilerForModule(&ee, mod, &options, sizeof(options),
                                     &error);
-
+   LLVMDumpModule(mod);
    LLVMValueRef fun = LLVMGetNamedFunction(mod, "main");
-
-   LLVMGenericValueRef ret_val = LLVMRunFunctionAsMain(ee, fun, argc,
-                                                       argv, NULL);
+   printf("Executing main:\n\n");
+   int ret_val = LLVMRunFunctionAsMain(ee, fun, argc,
+                                       (const char * const *)argv, NULL);
+   if (ret_val) {
+      printf("Failed to run main\n");
+      return ret_val;
+   }
+   printf("\nStack maps:\n");
    stack_map_t *stack_map = create_stack_map(stack_map_addr);
    inspect_stackmap(stack_map);
-   LLVMDisposeGenericValue(ret_val);
    LLVMDisposeExecutionEngine(ee);
    LLVMDisposeMessage(error);
    free_stack_map(stack_map);
