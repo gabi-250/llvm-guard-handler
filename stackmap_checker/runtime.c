@@ -48,9 +48,9 @@ LLVMBool finalize_cb(void *opaque, char **error) {
    return 0;
 }
 
-void guard_failure() {
+void __guard_failure(uint64_t sm_id) {
    // XXX
-   printf("guard failure!\n");
+   printf("guard failure @ %lu!\n", sm_id);
 }
 
 LLVMModuleRef create_module(char *filename) {
@@ -114,6 +114,7 @@ int main(int argc, char **argv) {
       return 1;
    }
    LLVMModuleRef mod = create_module(argv[1]);
+
    LLVMLinkInMCJIT();
    LLVMInitializeNativeTarget();
    LLVMInitializeNativeAsmPrinter();
@@ -125,27 +126,24 @@ int main(int argc, char **argv) {
             finalize_cb,
             destroy_cb
          );
-   LLVMValueRef gf_addr = LLVMGetNamedGlobal(mod, "gf_addr");
-   LLVMTypeRef i8 = LLVMInt8Type();
-   LLVMTypeRef i8_ptr = LLVMPointerType(i8, 0);
-   LLVMContextRef ctx = LLVMGetModuleContext(mod);
-   LLVMValueRef c = LLVMConstIntToPtr(LLVMConstInt(LLVMInt64TypeInContext(ctx),
-                                                   (uint64_t)guard_failure, 0),
-                                      i8_ptr);
-   LLVMSetInitializer(gf_addr, c);
    LLVMExecutionEngineRef ee;
    struct LLVMMCJITCompilerOptions options;
    LLVMInitializeMCJITCompilerOptions(&options, sizeof(options));
    options.MCJMM = mm_ref;
    LLVMCreateMCJITCompilerForModule(&ee, mod, &options, sizeof(options),
                                     &error);
-   LLVMDumpModule(mod);
+   LLVMValueRef gf_handler = LLVMGetNamedFunction(mod, "__guard_failure");
+   if (!gf_handler) {
+      printf("Could not find \'__guard_failure\'\n");
+      return 1;
+   }
+   LLVMAddGlobalMapping(ee, gf_handler, (void *)__guard_failure);
    LLVMValueRef fun = LLVMGetNamedFunction(mod, "main");
    printf("Executing main:\n\n");
    int ret_val = LLVMRunFunctionAsMain(ee, fun, argc,
                                        (const char * const *)argv, NULL);
    if (ret_val) {
-      printf("Failed to run main\n");
+      printf("main failed to exit successfully\n");
       return ret_val;
    }
    printf("\nStack maps:\n");

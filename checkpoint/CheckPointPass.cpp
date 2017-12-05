@@ -20,22 +20,25 @@ namespace {
 
   struct CheckPointPass: public FunctionPass {
     static char id;
-    static int sm_id;
+    static long long int sm_id;
 
     CheckPointPass() : FunctionPass(id) {}
 
     virtual bool doInitialization(Module &mod) {
-      if (mod.getNamedValue("gf_addr") == nullptr) {
+      if (mod.getFunction("__guard_failure") == nullptr) {
         LLVMContext &ctx = mod.getContext();
-        Type *i8ptr_t = PointerType::getUnqual(IntegerType::getInt8Ty(ctx));
-        mod.getOrInsertGlobal("gf_addr", i8ptr_t);
-        // add dummy value (to be replaced by the runtime)
-        mod.getGlobalVariable("gf_addr")->setInitializer(
-            ConstantExpr::getIntToPtr(ConstantInt::get(
-                        IntegerType::getInt8Ty(ctx), 25), i8ptr_t));
+        Type* void_t = Type::getVoidTy(ctx);
+        Type* i64_t = Type::getInt64Ty(ctx);
+        FunctionType* signature = FunctionType::get(void_t, i64_t, false);
+        Function *fun = Function::Create(signature,
+                                         Function::ExternalLinkage,
+                                         "__guard_failure",
+                                         &mod);
         return true;
+      } else {
+        errs() << "Found \'__guard_failure\' function. Exiting.\n";
+        exit(1);
       }
-      return false;
     }
 
     virtual bool runOnFunction(Function &fun) {
@@ -46,23 +49,25 @@ namespace {
       bool modified = false;
       for (auto &bb : fun) {
         for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-          //if (isJump(it->getOpcode())) {
+          //if (isJump(it->getOpcode())
           if (it->getOpcode() == Instruction::Call) {
             // add a patchpoint before each call instruction for now
             LLVMContext &ctx = bb.getContext();
             Module *mod = fun.getParent();
             IRBuilder<> builder(&bb, it);
-            Value *ptr = mod->getGlobalVariable("gf_addr");
-            GlobalVariable* g = mod->getGlobalVariable("gf_addr");
-            Value* loaded_addr = builder.CreateLoad(g);
+
             Type *i8ptr_t = PointerType::getUnqual(IntegerType::getInt8Ty(ctx));
+            Constant* gf_handler_ptr = ConstantExpr::getBitCast(
+                mod->getFunction("__guard_failure"), i8ptr_t);
+
             auto args = std::vector<Value*> { builder.getInt64(sm_id++),
-                                              builder.getInt32(256),
-                                              loaded_addr,
-                                              builder.getInt32(0)};
+                                              builder.getInt32(13), // XXX why?
+                                              gf_handler_ptr,
+                                              builder.getInt32(1),
+                                              builder.getInt64(sm_id - 1) };
+
             auto call_inst = builder.CreateCall(Intrinsic::getDeclaration(
-                  fun.getParent(), Intrinsic::experimental_patchpoint_void),
-                  args);
+                  mod, Intrinsic::experimental_patchpoint_void), args);
             modified = true;
           }
         }
@@ -70,8 +75,8 @@ namespace {
       return modified;
     }
 
-    bool isJump(unsigned opCode) {
-      switch (opCode) {
+    bool isJump(unsigned opcode) {
+      switch (opcode) {
         case Instruction::Br: return true;
         case Instruction::Switch: return true;
         case Instruction::IndirectBr: return true;
@@ -84,7 +89,7 @@ namespace {
 }
 
 char CheckPointPass::id = 0;
-int CheckPointPass::sm_id = 0;
+long long int CheckPointPass::sm_id = 0;
 
 // Automatically enable the pass.
 // http://adriansampson.net/blog/clangpass.html
