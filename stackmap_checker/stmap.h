@@ -9,7 +9,7 @@ typedef struct Location {
     uint16_t size;
     uint16_t dwarf_reg_num;
     uint16_t reserved2;
-    uint32_t offset;
+    int32_t offset;
 } location_t;
 
 typedef struct LiveOut {

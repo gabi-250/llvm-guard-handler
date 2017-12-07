@@ -33,7 +33,7 @@ stack_map_t* create_stack_map(uint8_t *start_addr) {
       rec->locations =
          (location_t *)malloc(sizeof(location_t) * rec->num_locations);
       size_t loc_size =
-         2 * sizeof(uint8_t) + 3 * sizeof(uint16_t) + sizeof(uint32_t);
+         2 * sizeof(uint8_t) + 3 * sizeof(uint16_t) + sizeof(int32_t);
       for (size_t j = 0; j < rec->num_locations; ++j) {
          location_t *loc = rec->locations + j;
          memcpy(loc, addr, loc_size);
