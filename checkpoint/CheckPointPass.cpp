@@ -55,17 +55,22 @@ namespace {
             LLVMContext &ctx = bb.getContext();
             Module *mod = fun.getParent();
             IRBuilder<> builder(&bb, it);
-
             Type *i8ptr_t = PointerType::getUnqual(IntegerType::getInt8Ty(ctx));
             Constant* gf_handler_ptr = ConstantExpr::getBitCast(
                 mod->getFunction("__guard_failure"), i8ptr_t);
-
             auto args = std::vector<Value*> { builder.getInt64(sm_id++),
                                               builder.getInt32(13), // XXX why?
                                               gf_handler_ptr,
                                               builder.getInt32(1),
                                               builder.getInt64(sm_id - 1) };
-
+            for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != it;
+                 ++prev_inst) {
+              // XXX need to accurately identify the live registers
+              if (prev_inst->use_begin() != prev_inst->use_end()) {
+                errs() << "Recording " <<  *prev_inst << "\n";
+                args.push_back(&*prev_inst);
+              }
+            }
             auto call_inst = builder.CreateCall(Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_patchpoint_void), args);
             modified = true;
