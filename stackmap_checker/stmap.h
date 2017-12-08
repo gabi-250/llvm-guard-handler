@@ -3,6 +3,14 @@
 
 #include <stdint.h>
 
+typedef enum {
+   REGISTER,
+   DIRECT,
+   INDIRECT,
+   CONSTANT,
+   CONST_INDEX
+} location_type;
+
 typedef struct Location {
     uint8_t kind; // Register | Direct | Indirect | Constant | ConstantIndex
     uint8_t reserved;

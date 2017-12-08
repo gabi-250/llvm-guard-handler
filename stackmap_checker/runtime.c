@@ -4,12 +4,15 @@
 #include <unistd.h>
 #include <string.h>
 #include <math.h>
+#include <execinfo.h>
 #include <llvm-c/ExecutionEngine.h>
 #include <llvm-c/Object.h>
 #include <llvm-c/Core.h>
 #include <llvm-c/BitReader.h>
 #include <llvm-c/BitWriter.h>
 #include "stmap.h"
+
+static uint8_t *stack_map_addr = NULL;
 
 size_t calculate_size(size_t size) {
     size_t page_size = getpagesize();
@@ -49,8 +52,48 @@ LLVMBool finalize_cb(void *opaque, char **error) {
 }
 
 void __guard_failure(uint64_t sm_id) {
-   // XXX
-   printf("guard failure @ %lu!\n", sm_id);
+   volatile uint64_t r[16];
+   asm("mov %%rax,%0\n"
+       "mov %%rcx,%1\n"
+       "mov %%rdx,%2\n"
+       "mov %%rbx,%3\n"
+       "mov %%rsp,%4\n"
+       "mov %%rbp,%5\n"
+       "mov %%rsi,%6\n"
+       "mov %%rdi,%7\n" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]),
+                          "=r"(r[4]), "=r"(r[5]), "=r"(r[6]), "=r"(r[7]) : : );
+   asm("mov %%r8,%0\n"
+       "mov %%r9,%1\n"
+       "mov %%r10,%2\n"
+       "mov %%r11,%3\n"
+       "mov %%r12,%4\n"
+       "mov %%r13,%5\n"
+       "mov %%r14,%6\n"
+       "mov %%r15,%7\n" : "=r"(r[8]), "=r"(r[9]), "=r"(r[10]), "=r"(r[11]),
+                          "=r"(r[12]), "=r"(r[13]), "=r"(r[14]), "=r"(r[15]) : : );
+   stack_map_t *stack_map = create_stack_map(stack_map_addr);
+   stack_map_record_t rec = stack_map->sm_records[sm_id];
+   void *bp = __builtin_frame_address(1);
+   printf("Locations:\n");
+   for (size_t j = 0; j < rec.num_locations; ++j) {
+      location_type type = rec.locations[j].kind - 1;
+      if (type == REGISTER) {
+         int reg_num = rec.locations[j].dwarf_reg_num;
+         printf("[REGISTER %d] Loc %zu, value is %lu\n", reg_num, j, r[reg_num]);
+      } else if (type == DIRECT) {
+         int *addr = bp + stack_map->sm_records[sm_id].locations[j].offset;
+         printf("[DIRECT] Loc %zu, value is %d @ %p\n", j,
+               *addr, (void *)addr);
+      }
+   }
+   printf("Liveouts:\n");
+   for (size_t j = 0; j < rec.num_liveouts; ++j) {
+      liveout_t liveout = rec.liveouts[j];
+      int reg_num = liveout.dwarf_reg_num;
+      printf("[REGISTER %d] Liveout %zu, value is %lu\n", reg_num, j,
+             *(int *)r[reg_num]);
+   }
+   free_stack_map(stack_map);
 }
 
 LLVMModuleRef create_module(char *filename) {
@@ -95,7 +138,7 @@ void inspect_stackmap(stack_map_t *stack_map) {
          location_t *loc = rec->locations + j;
          printf("\t\tKind %u\n", loc->kind);
          printf("\t\tSize %u\n", loc->size);
-         printf("\t\tOffset %u\n", loc->offset);
+         printf("\t\tOffset %d\n", loc->offset);
          printf("\t\tReg num: %u\n", loc->dwarf_reg_num);
       }
       for (int j = 0; j < rec->num_liveouts; ++j) {
@@ -114,11 +157,9 @@ int main(int argc, char **argv) {
       return 1;
    }
    LLVMModuleRef mod = create_module(argv[1]);
-
    LLVMLinkInMCJIT();
    LLVMInitializeNativeTarget();
    LLVMInitializeNativeAsmPrinter();
-   uint8_t *stack_map_addr = NULL;
    LLVMMCJITMemoryManagerRef mm_ref = LLVMCreateSimpleMCJITMemoryManager(
             &stack_map_addr,
             code_section_cb,
@@ -142,15 +183,12 @@ int main(int argc, char **argv) {
    printf("Executing main:\n\n");
    int ret_val = LLVMRunFunctionAsMain(ee, fun, argc,
                                        (const char * const *)argv, NULL);
+
    if (ret_val) {
       printf("main failed to exit successfully\n");
       return ret_val;
    }
-   printf("\nStack maps:\n");
-   stack_map_t *stack_map = create_stack_map(stack_map_addr);
-   inspect_stackmap(stack_map);
    LLVMDisposeExecutionEngine(ee);
    LLVMDisposeMessage(error);
-   free_stack_map(stack_map);
    return 0;
 }
