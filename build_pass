@@ -1,0 +1,6 @@
+#!/bin/bash
+
+cd build && make clean && make ; cd ..
+rm trace.bc
+clang -Xclang -load  -Xclang build/checkpoint/libCheckPointPass.so -S -emit-llvm examples/trace.c
+llvm-as trace.ll

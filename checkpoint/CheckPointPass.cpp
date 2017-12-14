@@ -12,6 +12,8 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <cstdio>
+#include <string>
+
 using namespace llvm;
 
 namespace {
@@ -24,34 +26,17 @@ namespace {
 
     CheckPointPass() : FunctionPass(id) {}
 
-    virtual bool doInitialization(Module &mod) {
-      if (mod.getFunction("__guard_failure") == nullptr) {
-        LLVMContext &ctx = mod.getContext();
-        Type* void_t = Type::getVoidTy(ctx);
-        Type* i64_t = Type::getInt64Ty(ctx);
-        FunctionType* signature = FunctionType::get(void_t, i64_t, false);
-        Function *fun = Function::Create(signature,
-                                         Function::ExternalLinkage,
-                                         "__guard_failure",
-                                         &mod);
-        return true;
-      } else {
-        errs() << "Found \'__guard_failure\' function. Exiting.\n";
-        exit(1);
-      }
-    }
-
     virtual bool runOnFunction(Function &fun) {
       errs() << "Running on function: " <<  fun.getName() << '\n';
-      if (fun.getName() != "trace") {
+      std::string fun_name = fun.getName();
+      if (fun_name != "trace" && fun_name != "unopt") {
+        errs() << "Done\n";
         return false;
       }
-      bool modified = false;
       for (auto &bb : fun) {
         for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-          //if (isJump(it->getOpcode())
+          // add a patchpoint before each call instruction for now
           if (it->getOpcode() == Instruction::Call) {
-            // add a patchpoint before each call instruction for now
             LLVMContext &ctx = bb.getContext();
             Module *mod = fun.getParent();
             IRBuilder<> builder(&bb, it);
@@ -59,10 +44,21 @@ namespace {
             Constant* gf_handler_ptr = ConstantExpr::getBitCast(
                 mod->getFunction("__guard_failure"), i8ptr_t);
             auto args = std::vector<Value*> { builder.getInt64(sm_id++),
-                                              builder.getInt32(13), // XXX why?
-                                              gf_handler_ptr,
-                                              builder.getInt32(1),
-                                              builder.getInt64(sm_id - 1) };
+                                              builder.getInt32(13) // XXX why?
+                                            };
+            Function *intrinsic = nullptr;
+            if (fun_name == "trace") {
+              // insert a patchpoint, not a stack map - need extra arguments
+              args.insert(args.end(), { gf_handler_ptr,
+                                        builder.getInt32(1),
+                                        builder.getInt32(0),
+                                        builder.getInt64(sm_id - 1) });
+              intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_patchpoint_void);
+            } else {
+              intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_stackmap);
+            }
             for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != it;
                  ++prev_inst) {
               // XXX need to accurately identify the live registers
@@ -71,13 +67,11 @@ namespace {
                 args.push_back(&*prev_inst);
               }
             }
-            auto call_inst = builder.CreateCall(Intrinsic::getDeclaration(
-                  mod, Intrinsic::experimental_patchpoint_void), args);
-            modified = true;
+            auto call_inst = builder.CreateCall(intrinsic, args);
           }
         }
       }
-      return modified;
+      return true;
     }
 
     bool isJump(unsigned opcode) {
