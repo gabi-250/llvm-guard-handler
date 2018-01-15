@@ -9,7 +9,6 @@ stack_map_t* create_stack_map(uint8_t *start_addr)
     char *addr = (char *)start_addr;
     size_t header_size = sizeof(uint8_t) * 2 + sizeof(uint16_t) + 3 * sizeof(uint32_t);
     memcpy(sm, (void *)addr, header_size);
-    sm->version = *(uint8_t *)addr;
     addr += header_size;
     sm->stk_size_records =
         (stack_size_record_t *)malloc(sizeof(stack_size_record_t) * sm->num_func);
@@ -69,31 +68,31 @@ void print_locations(stack_map_t *stack_map, void *frame_addr, uint64_t *regs)
             printf("Record %zu:\n", i);
         }
         for (size_t j = 0; j < rec.num_locations; ++j) {
-            location_type type = rec.locations[j].kind - 1;
+            location_type type = rec.locations[j].kind;
             if (type == REGISTER) {
                 uint16_t reg_num = rec.locations[j].dwarf_reg_num;
                 printf("\t[REGISTER %hu] Loc %zu, value is %lu\n", reg_num, j,
                        regs[reg_num]);
-                if (regs[reg_num]) {
-                    printf("\t*(int *)regs[reg_num] = %d\n", *(int *)regs[reg_num]);
-                }
             } else if (type == DIRECT) {
-                int *addr = (int *)frame_addr + rec.locations[j].offset;
-                printf("\t[DIRECT] Loc %zu, value is %d @ %p\n", j,
-                        *addr, (void *)addr);
-                if (addr) {
-                    printf("\t*addr = %d\n", *addr);
-                }
+                uint64_t addr = (uint64_t)frame_addr + rec.locations[j].offset;
+                printf("\t[DIRECT] Loc value is %p @ %d\n",
+                        (void *)addr, *(int *)addr);
             } else if (type == INDIRECT) {
-                int *addr = (int *)frame_addr + rec.locations[j].offset;
-                printf("\t[INDIRECT] Loc %zu, value is %d @ %p\n", j,
-                        *addr, (void *)addr);
+                // XXX
+                uint64_t addr = regs[rec.locations[j].dwarf_reg_num] +
+                    rec.locations[j].offset;
+                printf("\t[INDIRECT] Loc %zu, value is %lu @ %p\n", j,
+                        *(uint64_t *)addr, (void *)addr);
             } else if (type == CONSTANT) {
+                printf("\t[CONSTANT] Loc %zu, value is %d\n", j,
+                        rec.locations[j].offset);
+            } else if (type == CONST_INDEX) {
                 int32_t offset = rec.locations[j].offset;
-                printf("\t[CONSTANT] Loc %zu, value is %lu\n", j,
+                printf("\t[CONSTANT INDEX] Loc %zu, value is %lu\n", j,
                         stack_map->constants[offset]);
             } else {
-                printf("unk\n");
+                printf("Unknown location type %d\n", type);
+                exit(1);
             }
         }
     }
@@ -120,10 +119,6 @@ void print_liveouts(stack_map_t *stack_map, uint64_t *regs)
             uint16_t reg_num = liveout.dwarf_reg_num;
             printf("\t[REGISTER %hu] Liveout %zu, value is %lu\n", reg_num, j,
                    regs[reg_num]);
-
-            if (regs[reg_num]) {
-                printf("\t*(int *)regs[reg_num] = %d\n", *(int *)regs[reg_num]);
-            }
         }
     }
 }

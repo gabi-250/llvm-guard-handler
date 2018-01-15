@@ -51,18 +51,19 @@ namespace {
               // insert a patchpoint, not a stack map - need extra arguments
               args.insert(args.end(), { gf_handler_ptr,
                                         builder.getInt32(1),
-                                        builder.getInt32(0),
                                         builder.getInt64(sm_id - 1) });
               intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_patchpoint_void);
-            } else {
+            } else if (fun_name == "unopt") {
               intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_stackmap);
             }
-            for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != it;
+            for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != bb.end();
                  ++prev_inst) {
               // XXX need to accurately identify the live registers
-              if (prev_inst->use_begin() != prev_inst->use_end()) {
+                errs() << "Recording " <<  *prev_inst << "\n";
+              if (prev_inst != it &&
+                    prev_inst->use_begin() != prev_inst->use_end()) {
                 errs() << "Recording " <<  *prev_inst << "\n";
                 args.push_back(&*prev_inst);
               }

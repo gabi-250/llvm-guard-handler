@@ -20,7 +20,6 @@ void *get_addr(char *section_name) {
     char *strtab = (char *)(data + shdr[elf->e_shstrndx].sh_offset);
     for(int i = 0; i < elf->e_shnum; i++) {
         if (strcmp(section_name, &strtab[shdr[i].sh_name]) == 0) {
-            printf("Found section: %s\n", &strtab[shdr[i].sh_name]);
             return (void *) shdr[i].sh_offset + 0x400000;
         }
     }
@@ -29,7 +28,7 @@ void *get_addr(char *section_name) {
 
 void unopt();
 
-void __guard_failure(uint64_t sm_id) {
+void __guard_failure(int64_t sm_id) {
     uint64_t r[16];
     asm volatile("mov %%rax,%0\n"
                  "mov %%rcx,%1\n"
@@ -51,7 +50,7 @@ void __guard_failure(uint64_t sm_id) {
                  "mov %%r15,%7\n" : "=r"(r[8]), "=r"(r[9]), "=r"(r[10]),
                                     "=r"(r[11]), "=r"(r[12]), "=r"(r[13]),
                                     "=r"(r[14]), "=r"(r[15]) : : );
-    printf("Guard %lu failed!\n", sm_id);
+    printf("Guard %ld failed!\n", sm_id);
     void *stack_map_addr = get_addr(".llvm_stackmaps");
     if (!stack_map_addr) {
         printf(".llvm_stackmaps section not found. Exiting.\n");
@@ -99,12 +98,14 @@ void __guard_failure(uint64_t sm_id) {
 
 void unopt() {
     int x = 2;
+    putc(x + '0', stdout);
+    putc('\n', stdout);
     exit(x);
 }
 
 void trace() {
     int x = 5;
-    printf("trace %d @ %p\n", x, &x);
+    printf("trace %d @ %p\n", x, (void *)&x);
 }
 
 int main(int argc, char **argv) {

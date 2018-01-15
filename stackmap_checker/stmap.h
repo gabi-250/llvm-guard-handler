@@ -4,11 +4,11 @@
 #include <stdint.h>
 
 typedef enum {
-    REGISTER,
-    DIRECT,
-    INDIRECT,
-    CONSTANT,
-    CONST_INDEX
+    REGISTER    = 0x1,
+    DIRECT      = 0x2,
+    INDIRECT    = 0x3,
+    CONSTANT    = 0x4,
+    CONST_INDEX = 0x5
 } location_type;
 
 typedef struct Location {
