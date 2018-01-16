@@ -61,22 +61,24 @@ void __guard_failure(int64_t sm_id)
     stack_map_t *stack_map = create_stack_map(stack_map_addr);
     void *bp = __builtin_frame_address(1);
 
-    uint64_t fun_addr = 0;
-    for (size_t j = 0; j < stack_map->num_rec; ++j) {
-        stack_size_record_t s_rec = stack_map->stk_size_records[j];
-        if ((void *)s_rec.fun_addr == (void *) unopt) {
-            // useless check, need to work out where to jump
-            fun_addr = s_rec.fun_addr;
-        }
-    }
+    uint64_t addr = 0;
+    uint64_t target_sm_id = 0; // XXX
+    stack_map_record_t smap_rec = stack_map->stk_map_records[target_sm_id];
+    stack_size_record_t ssize_rec = stack_map->stk_size_records[target_sm_id];
+    addr = ssize_rec.fun_addr + smap_rec.instr_offset;
 
     free_stack_map(stack_map);
-    asm volatile("add $0xe0,%%rsp\n"       // return to the stack of 'trace'
+    uint64_t stack_size = 0;
+    uint64_t aux = 0;
+    asm volatile("mov %%rsp,%1\n"
+                 "mov %%rbp,%0\n"
+                 "sub %1,%0" : "=r"(stack_size), "=r"(aux) : : );
+    asm volatile("add %1,%%rsp\n"           // return to the stack of 'trace'
                  "pop %%rbp\n"
-                 "mov -0x10(%%rbp),%%rdi\n" // make sure the format string is in rdi
-                 "sub $0xA,%%rdi\n"         // find the format string used in unopt
-                 "movl $0x5,-0x4(%%rbp)\n"   // print 5 instead of 2
-                 "jmp *%0": : "r"(fun_addr + 25) : "%rsp", "%rdi", "%rax");
+                                            // make sure the format string is in rdi
+                 "subl $0xA,-0x10(%%rbp)\n" // find the format string used in unopt
+                 "movl $0x5,-0x4(%%rbp)\n"  // print 5 instead of 2
+                 "jmp *%0": : "r"(addr), "m"(stack_size) : "%rsp", "%rdi", "%rax");
 }
 
 void unopt()
