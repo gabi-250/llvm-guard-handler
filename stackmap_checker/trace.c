@@ -8,7 +8,8 @@
 #include <string.h>
 #include "stmap.h"
 
-void *get_addr(char *section_name) {
+void *get_addr(char *section_name)
+{
     int fd = open("trace", O_RDONLY);
     void *data = mmap(NULL,
                       lseek(fd, 0, SEEK_END), // file size
@@ -28,7 +29,8 @@ void *get_addr(char *section_name) {
 
 void unopt();
 
-void __guard_failure(int64_t sm_id) {
+void __guard_failure(int64_t sm_id)
+{
     uint64_t r[16];
     asm volatile("mov %%rax,%0\n"
                  "mov %%rcx,%1\n"
@@ -37,9 +39,9 @@ void __guard_failure(int64_t sm_id) {
                  "mov %%rsp,%4\n"
                  "mov %%rbp,%5\n"
                  "mov %%rsi,%6\n"
-                 "mov %%rdi,%7\n" : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]),
-                                    "=r"(r[3]), "=r"(r[4]), "=r"(r[5]),
-                                    "=r"(r[6]), "=r"(r[7]) : : );
+                 "mov %%rdi,%7\n" : "=m"(r[0]), "=m"(r[1]), "=m"(r[2]),
+                                    "=m"(r[3]), "=m"(r[4]), "=m"(r[5]),
+                                    "=m"(r[6]), "=m"(r[7]) : : );
     asm volatile("mov %%r8,%0\n"
                  "mov %%r9,%1\n"
                  "mov %%r10,%2\n"
@@ -47,9 +49,9 @@ void __guard_failure(int64_t sm_id) {
                  "mov %%r12,%4\n"
                  "mov %%r13,%5\n"
                  "mov %%r14,%6\n"
-                 "mov %%r15,%7\n" : "=r"(r[8]), "=r"(r[9]), "=r"(r[10]),
-                                    "=r"(r[11]), "=r"(r[12]), "=r"(r[13]),
-                                    "=r"(r[14]), "=r"(r[15]) : : );
+                 "mov %%r15,%7\n" : "=m"(r[8]), "=m"(r[9]), "=m"(r[10]),
+                                    "=m"(r[11]), "=m"(r[12]), "=m"(r[13]),
+                                    "=m"(r[14]), "=m"(r[15]) : : );
     printf("Guard %ld failed!\n", sm_id);
     void *stack_map_addr = get_addr(".llvm_stackmaps");
     if (!stack_map_addr) {
@@ -58,9 +60,6 @@ void __guard_failure(int64_t sm_id) {
     }
     stack_map_t *stack_map = create_stack_map(stack_map_addr);
     void *bp = __builtin_frame_address(1);
-    print_locations(stack_map, bp, r);
-    print_liveouts(stack_map, r);
-    print_constants(stack_map);
 
     uint64_t fun_addr = 0;
     for (size_t j = 0; j < stack_map->num_rec; ++j) {
@@ -70,45 +69,31 @@ void __guard_failure(int64_t sm_id) {
             fun_addr = s_rec.fun_addr;
         }
     }
-    free_stack_map(stack_map);
 
-    asm volatile("mov %0,%%rax\n"
-                 "mov %1,%%rcx\n"
-                 "mov %2,%%rdx\n"
-                 "mov %3,%%rbx\n"
-                 "mov %4,%%rsp\n"
-                 "mov %5,%%rbp\n"
-                 "mov %6,%%rsi\n"
-                 "mov %7,%%rdi\n" : : "r"(r[0]), "r"(r[1]), "r"(r[2]),
-                                      "r"(r[3]), "r"(r[4]), "r"(r[5]),
-                                      "r"(r[6]), "r"(r[7]) : );
-    asm volatile("mov %0,%%r8\n"
-                 "mov %1,%%r9\n"
-                 "mov %2,%%r10\n"
-                 "mov %3,%%r11\n"
-                 "mov %4,%%r12\n"
-                 "mov %5,%%r13\n"
-                 "mov %6,%%r14\n"
-                 "mov %7,%%r15\n" : : "r"(r[8]), "r"(r[9]), "r"(r[10]),
-                                      "r"(r[11]), "r"(r[12]), "r"(r[13]),
-                                      "r"(r[14]), "r"(r[15]) : );
-    asm volatile("movl $0x5,-0x4(%rbp)");
-    asm volatile("jmp *%0" : : "r"(fun_addr + 15));
+    free_stack_map(stack_map);
+    asm volatile("add $0xe0,%%rsp\n"       // return to the stack of 'trace'
+                 "pop %%rbp\n"
+                 "mov -0x10(%%rbp),%%rdi\n" // make sure the format string is in rdi
+                 "sub $0xA,%%rdi\n"         // find the format string used in unopt
+                 "movl $0x5,-0x4(%%rbp)\n"   // print 5 instead of 2
+                 "jmp *%0": : "r"(fun_addr + 25) : "%rsp", "%rdi", "%rax");
 }
 
-void unopt() {
+void unopt()
+{
     int x = 2;
-    putc(x + '0', stdout);
-    putc('\n', stdout);
+    printf("unopt %d\n", x);
     exit(x);
 }
 
-void trace() {
+void trace()
+{
     int x = 5;
-    printf("trace %d @ %p\n", x, (void *)&x);
+    printf("trace %d\n", x);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     trace();
     return 0;
 }
