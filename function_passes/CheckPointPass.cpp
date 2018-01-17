@@ -11,8 +11,6 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
-#include <cstdio>
-#include <string>
 
 using namespace llvm;
 
@@ -27,12 +25,13 @@ namespace {
     CheckPointPass() : FunctionPass(id) {}
 
     virtual bool runOnFunction(Function &fun) {
-      errs() << "Running on function: " <<  fun.getName() << '\n';
+      errs() << "Running2 on function: " <<  fun.getName() << '\n';
       std::string fun_name = fun.getName();
       if (fun_name != "trace" && fun_name != "unopt") {
         errs() << "Done\n";
         return false;
       }
+
       for (auto &bb : fun) {
         for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
           // add a patchpoint before each call instruction for now
@@ -58,7 +57,7 @@ namespace {
               intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_stackmap);
             }
-            for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != bb.end();
+            for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != it;
                  ++prev_inst) {
               // XXX need to accurately identify the live registers
                 errs() << "Recording " <<  *prev_inst << "\n";
