@@ -18,7 +18,8 @@ namespace {
 
     virtual bool doInitialization(Module &mod) {
       for (auto &fun : mod.functions()) {
-        if (!fun.getName().startswith("__unopt_") && !fun.isDeclaration()) {
+        if (!fun.getName().startswith("__unopt_") && !fun.isDeclaration()
+            && !fun.hasAvailableExternallyLinkage())  {
           ValueToValueMapTy val;
           Function *unopt_fun = CloneFunction(&fun, val);
           unopt_fun->setName("__unopt_" + fun.getName().str());
@@ -51,6 +52,10 @@ namespace {
             }
           }
         }
+      } else if (fun.getName() == "get_number") {
+        fun.removeFnAttr(llvm::Attribute::OptimizeNone);
+        fun.removeFnAttr(llvm::Attribute::NoInline);
+        fun.addFnAttr(llvm::Attribute::AlwaysInline);
       }
       return true;
     }
