@@ -1,4 +1,6 @@
 #include <vector>
+#include <map>
+#include <stdint.h>
 #include <llvm/Pass.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/IRBuilder.h>
@@ -20,29 +22,50 @@ namespace {
 
   struct CheckPointPass: public FunctionPass {
     static char id;
-    static long long int sm_id;
+    static uint64_t sm_id;
+    static std::map<StringRef, uint64_t> start_sm_id;
 
     CheckPointPass() : FunctionPass(id) {}
 
     virtual bool runOnFunction(Function &fun) {
-      errs() << "Running2 on function: " <<  fun.getName() << '\n';
-      std::string fun_name = fun.getName();
-      if (fun_name != "trace" && fun_name != "unopt") {
-        errs() << "Done\n";
+      StringRef fun_name = fun.getName();
+      if (!fun_name.endswith("trace")) {
         return false;
       }
 
+      StringRef complementary_fun = "";
+      if (fun_name.startswith("__unopt_")) {
+        complementary_fun = fun_name.substr(8);
+      } else {
+        complementary_fun = StringRef("__unopt_" + fun_name.str());
+      }
+
+      uint64_t curr_sm_id = sm_id;
+      if (start_sm_id.find(complementary_fun) != start_sm_id.end()) {
+        curr_sm_id = ~start_sm_id[complementary_fun];
+      }
+
+      start_sm_id[fun_name] = sm_id;
+      uint64_t call_inst_count = 0;
       for (auto &bb : fun) {
         for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-          // add a patchpoint before each call instruction for now
-          if (it->getOpcode() == Instruction::Call) {
+          if (isa<CallInst>(it) &&
+              cast<CallInst>(*it).getCalledFunction()->getName() == "putchar") {
             LLVMContext &ctx = bb.getContext();
             Module *mod = fun.getParent();
             IRBuilder<> builder(&bb, it);
             Type *i8ptr_t = PointerType::getUnqual(IntegerType::getInt8Ty(ctx));
             Constant* gf_handler_ptr = ConstantExpr::getBitCast(
                 mod->getFunction("__guard_failure"), i8ptr_t);
-            auto args = std::vector<Value*> { builder.getInt64(sm_id++),
+
+            uint64_t patchpoint_id;
+
+            if (start_sm_id.find(complementary_fun) == start_sm_id.end()) {
+              patchpoint_id = curr_sm_id + call_inst_count;
+            } else {
+              patchpoint_id = ~(~curr_sm_id + call_inst_count);
+            }
+            auto args = std::vector<Value*> { builder.getInt64(patchpoint_id),
                                               builder.getInt32(13) // XXX why?
                                             };
             Function *intrinsic = nullptr;
@@ -50,26 +73,30 @@ namespace {
               // insert a patchpoint, not a stack map - need extra arguments
               args.insert(args.end(), { gf_handler_ptr,
                                         builder.getInt32(1),
-                                        builder.getInt64(sm_id - 1) });
+                                        builder.getInt64(patchpoint_id) });
               intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_patchpoint_void);
-            } else if (fun_name == "unopt") {
+            } else {
+              // unoptimized function
               intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_stackmap);
             }
             for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != it;
                  ++prev_inst) {
               // XXX need to accurately identify the live registers
-                errs() << "Recording " <<  *prev_inst << "\n";
               if (prev_inst != it &&
                     prev_inst->use_begin() != prev_inst->use_end()) {
-                errs() << "Recording " <<  *prev_inst << "\n";
                 args.push_back(&*prev_inst);
               }
             }
             auto call_inst = builder.CreateCall(intrinsic, args);
+            ++call_inst_count;
           }
         }
+      }
+
+      if (start_sm_id.find(complementary_fun) == start_sm_id.end()) {
+        sm_id = start_sm_id[fun_name] + call_inst_count;
       }
       return true;
     }
@@ -88,7 +115,8 @@ namespace {
 }
 
 char CheckPointPass::id = 0;
-long long int CheckPointPass::sm_id = 0;
+uint64_t CheckPointPass::sm_id = 0;
+std::map<StringRef, uint64_t> CheckPointPass::start_sm_id;
 
 // Automatically enable the pass.
 // http://adriansampson.net/blog/clangpass.html
@@ -97,4 +125,4 @@ static void registerPass(const PassManagerBuilder &,
   PM.add(new CheckPointPass());
 }
 static RegisterStandardPasses RegisterPass(
-    PassManagerBuilder::EP_EarlyAsPossible, registerPass);
+    PassManagerBuilder::EP_OptimizerLast, registerPass);
