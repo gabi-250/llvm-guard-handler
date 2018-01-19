@@ -60,6 +60,46 @@ stack_map_t* create_stack_map(uint8_t *start_addr)
     return sm;
 }
 
+stack_map_record_t* get_record(stack_map_t *stack_map, uint64_t patchpoint_id) {
+    for (size_t i = 0; i < stack_map->num_rec; ++i) {
+        if (stack_map->stk_map_records[i].patchpoint_id == patchpoint_id) {
+            return &stack_map->stk_map_records[i];
+        }
+    }
+    return NULL;
+}
+
+void print_rec(stack_map_t *sm, stack_map_record_t rec,
+        void *frame_addr, uint64_t *regs) {
+    for (size_t j = 0; j < rec.num_locations; ++j) {
+        location_type type = rec.locations[j].kind;
+        if (type == REGISTER) {
+            uint16_t reg_num = rec.locations[j].dwarf_reg_num;
+            printf("\t[REGISTER %hu] Loc %zu, value is %lu\n", reg_num, j,
+                   regs[reg_num]);
+        } else if (type == DIRECT) {
+            uint64_t addr = (uint64_t)frame_addr + rec.locations[j].offset;
+            printf("\t[DIRECT] Loc value is %d @ %p\n",
+                    *(int *)addr, (void *)addr);
+        } else if (type == INDIRECT) {
+            // XXX
+            uint64_t addr = regs[rec.locations[j].dwarf_reg_num] +
+                rec.locations[j].offset;
+            printf("\t[INDIRECT] Loc %zu, value is %lu @ %p\n", j,
+                    *(uint64_t *)addr, (void *)addr);
+        } else if (type == CONSTANT) {
+            printf("\t[CONSTANT] Loc %zu, value is %d\n", j,
+                    rec.locations[j].offset);
+        } else if (type == CONST_INDEX) {
+            int32_t offset = rec.locations[j].offset;
+            printf("\t[CONSTANT INDEX] Loc %zu, value is %lu\n", j,
+                    sm->constants[offset]);
+        } else {
+            printf("Unknown location type %d\n", type);
+            exit(1);
+        }
+    }
+}
 void print_locations(stack_map_t *stack_map, void *frame_addr, uint64_t *regs)
 {
     for (size_t i = 0; i < stack_map->num_rec; ++i) {
@@ -112,13 +152,13 @@ void print_liveouts(stack_map_t *stack_map, uint64_t *regs)
     for (size_t i = 0; i < stack_map->num_rec; ++i) {
         stack_map_record_t rec = stack_map->stk_map_records[i];
         if (rec.num_liveouts) {
-            printf("Record %zu:\n", i);
+            printf("Record %lu:\n", rec.patchpoint_id);
         }
         for (size_t j = 0; j < rec.num_liveouts; ++j) {
             liveout_t liveout = rec.liveouts[j];
             uint16_t reg_num = liveout.dwarf_reg_num;
-            printf("\t[REGISTER %hu] Liveout %zu, value is %lu\n", reg_num, j,
-                   regs[reg_num]);
+            printf("\t[REGISTER %hu] Liveout %zu, value is %p\n", reg_num, j,
+                   (void *)regs[reg_num]);
         }
     }
 }

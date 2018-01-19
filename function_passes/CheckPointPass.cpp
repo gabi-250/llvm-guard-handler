@@ -28,6 +28,7 @@ namespace {
     CheckPointPass() : FunctionPass(id) {}
 
     virtual bool runOnFunction(Function &fun) {
+      errs() << "Running CheckPointPass on function: " << fun.getName() << '\n';
       StringRef fun_name = fun.getName();
       if (!fun_name.endswith("trace")) {
         return false;
@@ -125,4 +126,4 @@ static void registerPass(const PassManagerBuilder &,
   PM.add(new CheckPointPass());
 }
 static RegisterStandardPasses RegisterPass(
-    PassManagerBuilder::EP_OptimizerLast, registerPass);
+    PassManagerBuilder::EP_EarlyAsPossible, registerPass);

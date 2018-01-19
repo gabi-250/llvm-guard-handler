@@ -1,33 +1,10 @@
 #include <stdio.h>
 #include <stdint.h>
-#include <elf.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 #include <string.h>
 #include "stmap.h"
-
-void *get_addr(char *section_name)
-{
-    int fd = open("trace", O_RDONLY);
-    void *data = mmap(NULL,
-                      lseek(fd, 0, SEEK_END), // file size
-                      PROT_READ,
-                      MAP_SHARED, fd, 0);
-    close(fd);
-    Elf64_Ehdr *elf = (Elf64_Ehdr *) data;
-    Elf64_Shdr *shdr = (Elf64_Shdr *) (data + elf->e_shoff);
-    char *strtab = (char *)(data + shdr[elf->e_shstrndx].sh_offset);
-    for(int i = 0; i < elf->e_shnum; i++) {
-        if (strcmp(section_name, &strtab[shdr[i].sh_name]) == 0) {
-            return (void *) shdr[i].sh_offset + 0x400000;
-        }
-    }
-    return NULL;
-}
-
-void unopt();
+#include "utils.h"
 
 void __guard_failure(int64_t sm_id)
 {
@@ -60,38 +37,102 @@ void __guard_failure(int64_t sm_id)
     }
     stack_map_t *stack_map = create_stack_map(stack_map_addr);
     void *bp = __builtin_frame_address(1);
-
     uint64_t addr = 0;
-    uint64_t target_sm_id = 0; // XXX
-    stack_map_record_t smap_rec = stack_map->stk_map_records[target_sm_id];
-    stack_size_record_t ssize_rec = stack_map->stk_size_records[target_sm_id];
+    stack_map_record_t smap_rec = *get_record(stack_map, ~sm_id);
+    stack_map_record_t new_smap_rec = *get_record(stack_map, sm_id);
+    stack_size_record_t ssize_rec = stack_map->stk_size_records[1];
+    for (size_t i = 0; i < smap_rec.num_locations; ++i) {
+        location_type type = smap_rec.locations[i].kind;
+        if (type == REGISTER) {
+            uint16_t reg_num = smap_rec.locations[i].dwarf_reg_num;
+            if (new_smap_rec.locations[i].kind == DIRECT) {
+                uint64_t addr = (uint64_t)bp + new_smap_rec.locations[i].offset;
+                r[reg_num] = addr;
+            } else if (new_smap_rec.locations[i].kind == CONSTANT) {
+                r[reg_num] = new_smap_rec.locations[i].offset;
+            } else {
+                printf("Not implemented\n");
+                exit(1);
+            }
+        } else if (type == DIRECT) {
+            uint64_t addr = (uint64_t)bp + smap_rec.locations[i].offset;
+            if (new_smap_rec.locations[i].kind == DIRECT) {
+                uint64_t new_addr = (uint64_t)bp + new_smap_rec.locations[i].offset;
+                *(uint64_t *)addr = *(uint64_t *)new_addr;
+            } else {
+                printf("Not implemented\n");
+                exit(1);
+            }
+        } else if (type == INDIRECT) {
+            // XXX
+            uint64_t addr = r[smap_rec.locations[i].dwarf_reg_num] +
+                smap_rec.locations[i].offset;
+            printf("Not implemented\n");
+            exit(1);
+        } else if (type == CONST_INDEX) {
+            int32_t offset = smap_rec.locations[i].offset;
+            printf("Not implemented\n");
+            exit(1);
+        }
+    }
     addr = ssize_rec.fun_addr + smap_rec.instr_offset;
-
-    free_stack_map(stack_map);
     uint64_t stack_size = 0;
     uint64_t aux = 0;
+    printf("Jumping to %p offset %u\n", (void*)addr, smap_rec.instr_offset);
+
+    stack_size_record_t opt_ssize_rec = stack_map->stk_size_records[0];
+    uint64_t new_stack_size = ssize_rec.stack_size;
+    if (opt_ssize_rec.stack_size < new_stack_size) {
+        printf("Enlarging stack by %lu\n",
+                new_stack_size - opt_ssize_rec.stack_size);
+        new_stack_size -= opt_ssize_rec.stack_size;
+    }
+    free_stack_map(stack_map);
     asm volatile("mov %%rsp,%1\n"
                  "mov %%rbp,%0\n"
                  "sub %1,%0" : "=r"(stack_size), "=r"(aux) : : );
+    // XXX restore liveout regs
+    asm volatile("mov %0,%%r8\n"
+                 "mov %1,%%r9\n"
+                 "mov %2,%%r10\n"
+                 "mov %3,%%r11\n"
+                 "mov %4,%%r12\n"
+                 "mov %5,%%r13\n"
+                 "mov %6,%%r14\n"
+                 "mov %7,%%r15\n"
+                 "mov $8,%%rbx\n"
+                 :  : "m"(r[8]), "m"(r[9]), "m"(r[10]),
+                      "m"(r[11]), "m"(r[12]), "m"(r[13]),
+                      "m"(r[14]), "m"(r[15]), "m"(r[3])
+                 :    "r13", "r12", "r14", "r15", "rbx", "memory");
     asm volatile("add %1,%%rsp\n"           // return to the stack of 'trace'
                  "pop %%rbp\n"
-                                            // make sure the format string is in rdi
-                 "subl $0xA,-0x10(%%rbp)\n" // find the format string used in unopt
-                 "movl $0x5,-0x4(%%rbp)\n"  // print 5 instead of 2
-                 "jmp *%0": : "r"(addr), "m"(stack_size) : "%rsp", "%rdi", "%rax");
+                 "sub $0x30,%%rbp\n"
+                 "push %%rbp\n"
+                 "mov %%rsp,%%rbp\n"
+                 "sub %2,%%rsp\n"
+                 "jmp *%0": : "r"(addr), "m"(stack_size),
+                              "r"(new_stack_size)// - ssize_rec.stack_size)
+                          : "%rsp", "%rbp", "%rax", "memory");
 }
 
-void unopt()
-{
-    int x = 2;
-    printf("unopt %d\n", x);
-    exit(x);
+int get_number() {
+    return 3;
 }
 
 void trace()
 {
-    int x = 5;
-    printf("trace %d\n", x);
+    int y = get_number();
+    int x = 2;
+    putchar(x + '0');
+    putchar('\n');
+    putchar(y + '0');
+    putchar('\n');
+    if (get_number() == 3) {
+        putchar(get_number() + '0');
+        putchar('\n');
+    }
+    exit(x);
 }
 
 int main(int argc, char **argv)
