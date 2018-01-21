@@ -36,3 +36,5 @@
 *.ll
 
 build/*
+
+*.swp

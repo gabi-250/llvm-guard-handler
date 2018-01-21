@@ -2,8 +2,8 @@ CC = clang
 
 CFLAGS := -g $(shell llvm-config --cflags) -Wno-language-extension-token
 LDFLAGS := $(shell llvm-config  --cflags --ldflags --libs all --system-libs) -lstdc++
-CPOINTPASS := -Xclang -load -Xclang ../build/function_passes/libCheckPointPass.so
-UNOPTPASS := -Xclang -load -Xclang ../build/function_passes/libUnoptimizedCopyPass.so
+CPOINTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libCheckPointPass.so
+UNOPTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libUnoptimizedCopyPass.so
 PASSFLAGS := $(CPOINTPASS) $(UNOPTPASS)
 OBJS := utils.o stmap.o
 EXECUTABLE := trace

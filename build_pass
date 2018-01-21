@@ -1,9 +1,0 @@
-#!/bin/bash
-
-mkdir -p build
-cd build && cmake .. && make clean && make ; cd ..
-rm trace.bc
-clang -Xclang -load -Xclang build/function_passes/libUnoptimizedCopyPass.so\
-  -Xclang -load -Xclang build/function_passes/libCheckPointPass.so\
-  -S -emit-llvm stackmap_checker/trace.c -O3
-llvm-as trace.ll

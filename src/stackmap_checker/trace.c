@@ -37,49 +37,50 @@ void __guard_failure(int64_t sm_id)
     }
     stack_map_t *stack_map = create_stack_map(stack_map_addr);
     void *bp = __builtin_frame_address(1);
-    uint64_t addr = 0;
-    stack_map_record_t smap_rec = *get_record(stack_map, ~sm_id);
-    stack_map_record_t new_smap_rec = *get_record(stack_map, sm_id);
+    stack_map_record_t unopt_rec = *get_record(stack_map, ~sm_id);
+    stack_map_record_t opt_rec = *get_record(stack_map, sm_id);
     stack_size_record_t ssize_rec = stack_map->stk_size_records[1];
-    for (size_t i = 0; i < smap_rec.num_locations; ++i) {
-        location_type type = smap_rec.locations[i].kind;
+    uint64_t addr = 0;
+    for (size_t i = 0; i < unopt_rec.num_locations; ++i) {
+        location_type type = unopt_rec.locations[i].kind;
         if (type == REGISTER) {
-            uint16_t reg_num = smap_rec.locations[i].dwarf_reg_num;
-            if (new_smap_rec.locations[i].kind == DIRECT) {
-                uint64_t addr = (uint64_t)bp + new_smap_rec.locations[i].offset;
+            uint16_t reg_num = unopt_rec.locations[i].dwarf_reg_num;
+            if (opt_rec.locations[i].kind == DIRECT) {
+                uint64_t addr = (uint64_t)bp + opt_rec.locations[i].offset;
                 r[reg_num] = addr;
-            } else if (new_smap_rec.locations[i].kind == CONSTANT) {
-                r[reg_num] = new_smap_rec.locations[i].offset;
+            } else if (opt_rec.locations[i].kind == CONSTANT) {
+                r[reg_num] = opt_rec.locations[i].offset;
             } else {
-                printf("Not implemented\n");
+                printf("Not implemented - register\n");
                 exit(1);
             }
         } else if (type == DIRECT) {
-            uint64_t addr = (uint64_t)bp + smap_rec.locations[i].offset;
-            if (new_smap_rec.locations[i].kind == DIRECT) {
-                uint64_t new_addr = (uint64_t)bp + new_smap_rec.locations[i].offset;
-                *(uint64_t *)addr = *(uint64_t *)new_addr;
-            } else {
-                printf("Not implemented\n");
-                exit(1);
+            uint64_t unopt_addr = (uint64_t)bp + unopt_rec.locations[i].offset;
+            if (opt_rec.locations[i].kind == DIRECT) {
+                uint64_t addr = (uint64_t)bp + opt_rec.locations[i].offset;
+                printf("%d %d offsets\n", unopt_rec.locations[i].offset,
+                                            opt_rec.locations[i].offset);
+                /**(uint64_t *)unopt_addr = *(uint64_t *)addr;*/
+                printf("writing to addr %p\n", (void *)unopt_addr);
+            } else if (opt_rec.locations[i].kind == REGISTER) {
+                uint16_t reg_num = opt_rec.locations[i].dwarf_reg_num;
+                *(uint64_t *)unopt_addr = r[reg_num];
             }
         } else if (type == INDIRECT) {
             // XXX
-            uint64_t addr = r[smap_rec.locations[i].dwarf_reg_num] +
-                smap_rec.locations[i].offset;
-            printf("Not implemented\n");
+            uint64_t addr = r[unopt_rec.locations[i].dwarf_reg_num] +
+                unopt_rec.locations[i].offset;
+            printf("Not implemented - indirect\n");
             exit(1);
         } else if (type == CONST_INDEX) {
-            int32_t offset = smap_rec.locations[i].offset;
-            printf("Not implemented\n");
+            int32_t offset = unopt_rec.locations[i].offset;
+            printf("Not implemented - const index\n");
             exit(1);
         }
     }
-    addr = ssize_rec.fun_addr + smap_rec.instr_offset;
+    addr = ssize_rec.fun_addr + unopt_rec.instr_offset;
     uint64_t stack_size = 0;
     uint64_t aux = 0;
-    printf("Jumping to %p offset %u\n", (void*)addr, smap_rec.instr_offset);
-
     stack_size_record_t opt_ssize_rec = stack_map->stk_size_records[0];
     uint64_t new_stack_size = ssize_rec.stack_size;
     if (opt_ssize_rec.stack_size < new_stack_size) {
@@ -105,15 +106,14 @@ void __guard_failure(int64_t sm_id)
                       "m"(r[11]), "m"(r[12]), "m"(r[13]),
                       "m"(r[14]), "m"(r[15]), "m"(r[3])
                  :    "r13", "r12", "r14", "r15", "rbx", "memory");
+    /*stack_size -= 48;*/
     asm volatile("add %1,%%rsp\n"           // return to the stack of 'trace'
                  "pop %%rbp\n"
-                 "sub $0x30,%%rbp\n"
-                 "push %%rbp\n"
-                 "mov %%rsp,%%rbp\n"
                  "sub %2,%%rsp\n"
-                 "jmp *%0": : "r"(addr), "m"(stack_size),
+                 "jmp *%0"
+                 : : "r"(addr), "m"(stack_size),
                               "r"(new_stack_size)// - ssize_rec.stack_size)
-                          : "%rsp", "%rbp", "%rax", "memory");
+                          : "%rsp", "%rbp", "memory");
 }
 
 int get_number() {
