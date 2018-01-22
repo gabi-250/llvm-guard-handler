@@ -1,5 +1,5 @@
 CC = clang
-
+LLC = ../llvm/build/bin/llc
 CFLAGS := -g $(shell llvm-config --cflags) -Wno-language-extension-token
 LDFLAGS := $(shell llvm-config  --cflags --ldflags --libs all --system-libs) -lstdc++
 CPOINTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libCheckPointPass.so
@@ -12,13 +12,19 @@ EXECUTABLE := trace
 
 all: $(EXECUTABLE)
 
-trace: $(OBJS) trace.o
-	$(CC) $(PASSFLAGS) -o $@ $@.c $(OBJS) -O3
+trace: $(OBJS) $(EXECUTABLE).o
+	$(CC) $(PASSFLAGS) -o $@ $(OBJS) $(EXECUTABLE).o -O3
 
 bytecode: $(EXECUTABLE).c
 	$(CC) $(PASSFLAGS) -S -emit-llvm $< -O3
 
+$(EXECUTABLE).o: $(EXECUTABLE).ll
+	$(LLC) -filetype=obj $<
+
 %.o: %.h
+
+%.ll: %.c
+	$(CC) $(PASSFLAGS) -S -emit-llvm $< -O3
 
 clean:
 	rm -f $(EXECUTABLE) *.o *.ll

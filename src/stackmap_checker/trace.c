@@ -50,6 +50,9 @@ void __guard_failure(int64_t sm_id)
                 r[reg_num] = addr;
             } else if (opt_rec.locations[i].kind == CONSTANT) {
                 r[reg_num] = opt_rec.locations[i].offset;
+            } else if (opt_rec.locations[i].kind == REGISTER) {
+                uint16_t opt_reg_num = opt_rec.locations[i].dwarf_reg_num;
+                r[reg_num] = r[opt_reg_num];
             } else {
                 printf("Not implemented - register\n");
                 exit(1);
@@ -60,11 +63,14 @@ void __guard_failure(int64_t sm_id)
                 uint64_t addr = (uint64_t)bp + opt_rec.locations[i].offset;
                 printf("%d %d offsets\n", unopt_rec.locations[i].offset,
                                             opt_rec.locations[i].offset);
-                /**(uint64_t *)unopt_addr = *(uint64_t *)addr;*/
-                printf("writing to addr %p\n", (void *)unopt_addr);
+                *(uint64_t *)addr = *(uint64_t *)unopt_addr;
+                printf("writing to addr %p\n", (void *)addr);
             } else if (opt_rec.locations[i].kind == REGISTER) {
                 uint16_t reg_num = opt_rec.locations[i].dwarf_reg_num;
                 *(uint64_t *)unopt_addr = r[reg_num];
+            } else {
+                printf("Not implemented - direct\n");
+                exit(1);
             }
         } else if (type == INDIRECT) {
             // XXX
@@ -75,6 +81,9 @@ void __guard_failure(int64_t sm_id)
         } else if (type == CONST_INDEX) {
             int32_t offset = unopt_rec.locations[i].offset;
             printf("Not implemented - const index\n");
+            exit(1);
+        } else if (type != CONSTANT) {
+            printf("Not implemented - unknown\n");
             exit(1);
         }
     }
@@ -87,6 +96,8 @@ void __guard_failure(int64_t sm_id)
         printf("Enlarging stack by %lu\n",
                 new_stack_size - opt_ssize_rec.stack_size);
         new_stack_size -= opt_ssize_rec.stack_size;
+    } else {
+        new_stack_size = 0;
     }
     free_stack_map(stack_map);
     asm volatile("mov %%rsp,%1\n"
