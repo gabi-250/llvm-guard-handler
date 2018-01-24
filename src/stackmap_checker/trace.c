@@ -61,10 +61,7 @@ void __guard_failure(int64_t sm_id)
             uint64_t unopt_addr = (uint64_t)bp + unopt_rec.locations[i].offset;
             if (opt_rec.locations[i].kind == DIRECT) {
                 uint64_t addr = (uint64_t)bp + opt_rec.locations[i].offset;
-                printf("%d %d offsets\n", unopt_rec.locations[i].offset,
-                                            opt_rec.locations[i].offset);
-                *(uint64_t *)addr = *(uint64_t *)unopt_addr;
-                printf("writing to addr %p\n", (void *)addr);
+                *(uint64_t *)unopt_addr = *(uint64_t *)addr;
             } else if (opt_rec.locations[i].kind == REGISTER) {
                 uint16_t reg_num = opt_rec.locations[i].dwarf_reg_num;
                 *(uint64_t *)unopt_addr = r[reg_num];
@@ -92,17 +89,17 @@ void __guard_failure(int64_t sm_id)
     uint64_t aux = 0;
     stack_size_record_t opt_ssize_rec = stack_map->stk_size_records[0];
     uint64_t new_stack_size = ssize_rec.stack_size;
-    if (opt_ssize_rec.stack_size < new_stack_size) {
-        printf("Enlarging stack by %lu\n",
-                new_stack_size - opt_ssize_rec.stack_size);
-        new_stack_size -= opt_ssize_rec.stack_size;
-    } else {
-        new_stack_size = 0;
-    }
     free_stack_map(stack_map);
+
     asm volatile("mov %%rsp,%1\n"
                  "mov %%rbp,%0\n"
                  "sub %1,%0" : "=r"(stack_size), "=r"(aux) : : );
+
+    asm volatile("mov %0,%%rax\n"
+                 "mov %1,%%rcx\n"
+                 "mov %2,%%rdx\n"
+                                    : : "m"(r[0]), "m"(r[1]), "m"(r[2])
+                                    : "rax", "rcx", "rdx");
     // XXX restore liveout regs
     asm volatile("mov %0,%%r8\n"
                  "mov %1,%%r9\n"
@@ -112,19 +109,16 @@ void __guard_failure(int64_t sm_id)
                  "mov %5,%%r13\n"
                  "mov %6,%%r14\n"
                  "mov %7,%%r15\n"
-                 "mov $8,%%rbx\n"
+                 "mov %8,%%rbx\n"
                  :  : "m"(r[8]), "m"(r[9]), "m"(r[10]),
                       "m"(r[11]), "m"(r[12]), "m"(r[13]),
                       "m"(r[14]), "m"(r[15]), "m"(r[3])
                  :    "r13", "r12", "r14", "r15", "rbx", "memory");
-    /*stack_size -= 48;*/
     asm volatile("add %1,%%rsp\n"           // return to the stack of 'trace'
                  "pop %%rbp\n"
-                 "sub %2,%%rsp\n"
                  "jmp *%0"
-                 : : "r"(addr), "m"(stack_size),
-                              "r"(new_stack_size)// - ssize_rec.stack_size)
-                          : "%rsp", "%rbp", "memory");
+                 : : "r"(addr), "m"(stack_size)
+                 : "%rsp", "%rbp");
 }
 
 int get_number() {

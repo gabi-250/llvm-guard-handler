@@ -20,6 +20,7 @@ bytecode: $(EXECUTABLE).c
 
 $(EXECUTABLE).o: $(EXECUTABLE).ll
 	$(LLC) -filetype=obj $<
+	$(LLC) -filetype=obj $<
 
 %.o: %.h
 
