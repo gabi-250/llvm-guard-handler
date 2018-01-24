@@ -9,10 +9,12 @@
 extern void restore_and_jmp(void);
 uint64_t addr = 0;
 uint64_t stack_size = 0;
+uint64_t r[16];
+
+int get_number(void);
 
 void __guard_failure(int64_t sm_id)
 {
-    uint64_t r[16];
     asm volatile("mov %%rax,%0\n"
                  "mov %%rcx,%1\n"
                  "mov %%rdx,%2\n"
@@ -41,9 +43,19 @@ void __guard_failure(int64_t sm_id)
     }
     stack_map_t *stack_map = create_stack_map(stack_map_addr);
     void *bp = __builtin_frame_address(1);
-    stack_map_record_t unopt_rec = *get_record(stack_map, ~sm_id);
-    stack_map_record_t opt_rec = *get_record(stack_map, sm_id);
-    stack_size_record_t ssize_rec = stack_map->stk_size_records[1];
+
+    int unopt_stk_map_rec_idx = get_record(stack_map, ~sm_id);
+    int opt_stk_map_rec_idx = get_record(stack_map, sm_id);
+
+    if (unopt_stk_map_rec_idx == -1 || opt_stk_map_rec_idx == -1) {
+        exit(1);
+    }
+    stack_map_record_t unopt_rec =
+        stack_map->stk_map_records[unopt_stk_map_rec_idx];
+    stack_map_record_t opt_rec =
+        stack_map->stk_map_records[opt_stk_map_rec_idx];
+    stack_size_record_t ssize_rec =
+        *get_stack_size_record(stack_map, unopt_stk_map_rec_idx);
     for (size_t i = 0; i < unopt_rec.num_locations; ++i) {
         location_type type = unopt_rec.locations[i].kind;
         if (type == REGISTER) {
@@ -89,10 +101,10 @@ void __guard_failure(int64_t sm_id)
     }
     addr = ssize_rec.fun_addr + unopt_rec.instr_offset;
     uint64_t aux = 0;
-    stack_size_record_t opt_ssize_rec = stack_map->stk_size_records[0];
+    stack_size_record_t opt_ssize_rec =
+        *get_stack_size_record(stack_map, opt_stk_map_rec_idx);
     uint64_t new_stack_size = ssize_rec.stack_size;
     free_stack_map(stack_map);
-
     asm volatile("mov %%rsp,%1\n"
                  "mov %%rbp,%0\n"
                  "sub %1,%0" : "=r"(stack_size), "=r"(aux) : : );

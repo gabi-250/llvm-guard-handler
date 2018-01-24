@@ -60,10 +60,26 @@ stack_map_t* create_stack_map(uint8_t *start_addr)
     return sm;
 }
 
-stack_map_record_t* get_record(stack_map_t *stack_map, uint64_t patchpoint_id) {
-    for (size_t i = 0; i < stack_map->num_rec; ++i) {
-        if (stack_map->stk_map_records[i].patchpoint_id == patchpoint_id) {
-            return &stack_map->stk_map_records[i];
+int get_record(stack_map_t *sm, uint64_t patchpoint_id)
+{
+    for (size_t i = 0; i < sm->num_rec; ++i) {
+        if (sm->stk_map_records[i].patchpoint_id == patchpoint_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+stack_size_record_t* get_stack_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
+{
+    size_t cur_record_index = 1;
+    for (size_t i = 0; i < sm->num_func; ++i) {
+        stack_size_record_t rec = sm->stk_size_records[i];
+        if (sm_rec_idx + 1 >= cur_record_index &&
+                sm_rec_idx + 1 < cur_record_index + rec.record_count) {
+            return &sm->stk_size_records[i];
+        } else {
+            cur_record_index += rec.record_count;
         }
     }
     return NULL;
@@ -160,6 +176,15 @@ void print_liveouts(stack_map_t *stack_map, uint64_t *regs)
             printf("\t[REGISTER %hu] Liveout %zu, value is %p\n", reg_num, j,
                    (void *)regs[reg_num]);
         }
+    }
+}
+
+void print_stack_size_records(stack_map_t *sm)
+{
+    for (size_t i = 0; i < sm->num_func; ++i) {
+        stack_size_record_t rec = sm->stk_size_records[i];
+        printf("Stack size record %lu: addr: %p, stack size %lu, num recs %lu\n",
+               i, (void *)rec.fun_addr, rec.stack_size, rec.record_count);
     }
 }
 

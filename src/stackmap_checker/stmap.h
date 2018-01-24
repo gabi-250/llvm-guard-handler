@@ -59,8 +59,10 @@ typedef struct StackMap {
 } stack_map_t;
 
 stack_map_t* create_stack_map(uint8_t*);
-stack_map_record_t* get_record(stack_map_t *stack_map, uint64_t patchpoint_id);
+int get_record(stack_map_t *stack_map, uint64_t patchpoint_id);
+stack_size_record_t* get_stack_size_record(stack_map_t *sm, uint64_t sm_rec_idx);
 void free_stack_map(stack_map_t *);
+void print_stack_size_records(stack_map_t *);
 void print_locations(stack_map_t *sm, void *frame_addr, uint64_t *regs);
 void print_rec(stack_map_t *sm, stack_map_record_t rec, void *frame_addr,
                uint64_t *regs);
