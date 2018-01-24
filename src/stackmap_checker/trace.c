@@ -6,6 +6,10 @@
 #include "stmap.h"
 #include "utils.h"
 
+extern void restore_and_jmp(void);
+uint64_t addr = 0;
+uint64_t stack_size = 0;
+
 void __guard_failure(int64_t sm_id)
 {
     uint64_t r[16];
@@ -40,7 +44,6 @@ void __guard_failure(int64_t sm_id)
     stack_map_record_t unopt_rec = *get_record(stack_map, ~sm_id);
     stack_map_record_t opt_rec = *get_record(stack_map, sm_id);
     stack_size_record_t ssize_rec = stack_map->stk_size_records[1];
-    uint64_t addr = 0;
     for (size_t i = 0; i < unopt_rec.num_locations; ++i) {
         location_type type = unopt_rec.locations[i].kind;
         if (type == REGISTER) {
@@ -85,7 +88,6 @@ void __guard_failure(int64_t sm_id)
         }
     }
     addr = ssize_rec.fun_addr + unopt_rec.instr_offset;
-    uint64_t stack_size = 0;
     uint64_t aux = 0;
     stack_size_record_t opt_ssize_rec = stack_map->stk_size_records[0];
     uint64_t new_stack_size = ssize_rec.stack_size;
@@ -94,31 +96,7 @@ void __guard_failure(int64_t sm_id)
     asm volatile("mov %%rsp,%1\n"
                  "mov %%rbp,%0\n"
                  "sub %1,%0" : "=r"(stack_size), "=r"(aux) : : );
-
-    asm volatile("mov %0,%%rax\n"
-                 "mov %1,%%rcx\n"
-                 "mov %2,%%rdx\n"
-                                    : : "m"(r[0]), "m"(r[1]), "m"(r[2])
-                                    : "rax", "rcx", "rdx");
-    // XXX restore liveout regs
-    asm volatile("mov %0,%%r8\n"
-                 "mov %1,%%r9\n"
-                 "mov %2,%%r10\n"
-                 "mov %3,%%r11\n"
-                 "mov %4,%%r12\n"
-                 "mov %5,%%r13\n"
-                 "mov %6,%%r14\n"
-                 "mov %7,%%r15\n"
-                 "mov %8,%%rbx\n"
-                 :  : "m"(r[8]), "m"(r[9]), "m"(r[10]),
-                      "m"(r[11]), "m"(r[12]), "m"(r[13]),
-                      "m"(r[14]), "m"(r[15]), "m"(r[3])
-                 :    "r13", "r12", "r14", "r15", "rbx", "memory");
-    asm volatile("add %1,%%rsp\n"           // return to the stack of 'trace'
-                 "pop %%rbp\n"
-                 "jmp *%0"
-                 : : "r"(addr), "m"(stack_size)
-                 : "%rsp", "%rbp");
+    asm volatile("jmp restore_and_jmp");
 }
 
 int get_number() {

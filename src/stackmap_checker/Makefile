@@ -5,7 +5,7 @@ LDFLAGS := $(shell llvm-config  --cflags --ldflags --libs all --system-libs) -ls
 CPOINTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libCheckPointPass.so
 UNOPTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libUnoptimizedCopyPass.so
 PASSFLAGS := $(CPOINTPASS) $(UNOPTPASS)
-OBJS := utils.o stmap.o
+OBJS := utils.o stmap.o jump.o
 EXECUTABLE := trace
 
 .PHONY: all clean
@@ -21,6 +21,9 @@ bytecode: $(EXECUTABLE).c
 $(EXECUTABLE).o: $(EXECUTABLE).ll
 	$(LLC) -filetype=obj $<
 	$(LLC) -filetype=obj $<
+
+%.o: %.s
+	as -o $@ $<
 
 %.o: %.h
 
