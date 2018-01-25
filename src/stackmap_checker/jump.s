@@ -1,5 +1,6 @@
 .global restore_and_jmp
 
+# Restores the register state stored in array r and jumps to addr
 restore_and_jmp:
     mov    r,%rax
     mov    r+0x8,%rcx
@@ -15,6 +16,7 @@ restore_and_jmp:
     mov    r+0x68,%r13
     mov    r+0x70,%r14
     mov    r+0x78,%r15
-    add    stack_size,%rsp
+    mov    %rbp,%rsp
     pop    %rbp
+    pop    %rax # pop the return address
     jmp    *addr

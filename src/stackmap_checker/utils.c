@@ -18,7 +18,7 @@ void *get_addr(const char *section_name)
     char *strtab = (char *)data + shdr[elf->e_shstrndx].sh_offset;
     for(int i = 0; i < elf->e_shnum; i++) {
         if (strcmp(section_name, &strtab[shdr[i].sh_name]) == 0) {
-            return (char *)shdr[i].sh_offset + 0x400000;
+            return (void *)shdr[i].sh_addr;
         }
     }
     return NULL;

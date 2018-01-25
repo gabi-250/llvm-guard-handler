@@ -1,20 +1,31 @@
-#include <stdio.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <err.h>
 #include "stmap.h"
 #include "utils.h"
 
+// the label to jump to whenever a guard fails
 extern void restore_and_jmp(void);
+
+// The address to jump to. This represents the address execution should resume
+// at.
 uint64_t addr = 0;
-uint64_t stack_size = 0;
+
+// The saved registers.
 uint64_t r[16];
 
-int get_number(void);
-
+/*
+ * The guard failure handler.
+ *
+ * This is supposed to restore the stack/register state and resume execution in
+ * the unoptimized version of the trace.
+ */
 void __guard_failure(int64_t sm_id)
 {
+    // Save register the state in global array r
     asm volatile("mov %%rax,%0\n"
                  "mov %%rcx,%1\n"
                  "mov %%rdx,%2\n"
@@ -38,96 +49,109 @@ void __guard_failure(int64_t sm_id)
     printf("Guard %ld failed!\n", sm_id);
     void *stack_map_addr = get_addr(".llvm_stackmaps");
     if (!stack_map_addr) {
-        printf(".llvm_stackmaps section not found. Exiting.\n");
-        exit(1);
+        errx(1, ".llvm_stackmaps section not found. Exiting.\n");
     }
-    stack_map_t *stack_map = create_stack_map(stack_map_addr);
+
+    stack_map_t *sm = stmap_create(stack_map_addr);
+
+    // The frame address of `trace`.
     void *bp = __builtin_frame_address(1);
 
-    int unopt_stk_map_rec_idx = get_record(stack_map, ~sm_id);
-    int opt_stk_map_rec_idx = get_record(stack_map, sm_id);
+    // Retrieve the indices of the two stack map records which correspond to
+    // the point where a guard failed.
+    // unopt_rec_idx is the index of the stack map record of the unoptimized
+    // version of the function in which a guard failed
+    int unopt_rec_idx = stmap_get_map_record(sm, ~sm_id);
+    // The index of the record which corresponds to the patchpoint which
+    // called __guard_failure.
+    int opt_rec_idx = stmap_get_map_record(sm, sm_id);
 
-    if (unopt_stk_map_rec_idx == -1 || opt_stk_map_rec_idx == -1) {
-        exit(1);
+    if (unopt_rec_idx == -1 || opt_rec_idx == -1) {
+        errx(1, "Stack map record not found. Exiting.\n");
     }
-    stack_map_record_t unopt_rec =
-        stack_map->stk_map_records[unopt_stk_map_rec_idx];
-    stack_map_record_t opt_rec =
-        stack_map->stk_map_records[opt_stk_map_rec_idx];
-    stack_size_record_t ssize_rec =
-        *get_stack_size_record(stack_map, unopt_stk_map_rec_idx);
-    for (size_t i = 0; i < unopt_rec.num_locations; ++i) {
+
+    stack_map_record_t unopt_rec = sm->stk_map_records[unopt_rec_idx];
+    stack_map_record_t opt_rec = sm->stk_map_records[opt_rec_idx];
+
+    // Save the direct (stack) locations. These need to be restored later,
+    // because the process of restoring them might cause other values on the
+    // stack of `trace` to be overwritten.
+    uint64_t *direct_locations =
+        (uint64_t *)calloc(unopt_rec.num_locations, sizeof(uint64_t));
+    stack_size_record_t unopt_size_rec =
+        sm->stk_size_records[stmap_get_size_record(sm, unopt_rec_idx)];
+    // Locations are considered in pairs,  which is why the loop counter is
+    // incremented by 2. This is because locations stored at odd indices
+    // represent the sizes of the other locations. This is important because
+    // the runtime needs to know how many bytes to copy from each location to
+    // restore the stack state.
+    for (int i = 0; i < unopt_rec.num_locations - 1; i += 2) {
         location_type type = unopt_rec.locations[i].kind;
+        // Get the value of the current location. This value needs to be placed
+        // on the stack of the unoptimized function, or in a register.
+        uint64_t opt_location_value =
+            stmap_get_location_value(sm, opt_rec.locations[i], r, bp);
         if (type == REGISTER) {
             uint16_t reg_num = unopt_rec.locations[i].dwarf_reg_num;
-            if (opt_rec.locations[i].kind == DIRECT) {
-                uint64_t addr = (uint64_t)bp + opt_rec.locations[i].offset;
-                r[reg_num] = addr;
-            } else if (opt_rec.locations[i].kind == CONSTANT) {
-                r[reg_num] = opt_rec.locations[i].offset;
-            } else if (opt_rec.locations[i].kind == REGISTER) {
-                uint16_t opt_reg_num = opt_rec.locations[i].dwarf_reg_num;
-                r[reg_num] = r[opt_reg_num];
-            } else {
-                printf("Not implemented - register\n");
-                exit(1);
-            }
+            uint64_t loc_size =
+                stmap_get_location_value(sm, opt_rec.locations[i + 1], r, bp);
+            memcpy(r + reg_num, &opt_location_value, loc_size);
         } else if (type == DIRECT) {
-            uint64_t unopt_addr = (uint64_t)bp + unopt_rec.locations[i].offset;
-            if (opt_rec.locations[i].kind == DIRECT) {
-                uint64_t addr = (uint64_t)bp + opt_rec.locations[i].offset;
-                *(uint64_t *)unopt_addr = *(uint64_t *)addr;
-            } else if (opt_rec.locations[i].kind == REGISTER) {
-                uint16_t reg_num = opt_rec.locations[i].dwarf_reg_num;
-                *(uint64_t *)unopt_addr = r[reg_num];
-            } else {
-                printf("Not implemented - direct\n");
-                exit(1);
-            }
+            uint64_t loc_size =
+                stmap_get_location_value(sm, opt_rec.locations[i + 1], r, bp);
+            memcpy(direct_locations + i, &opt_location_value,
+                    loc_size);
         } else if (type == INDIRECT) {
-            // XXX
-            uint64_t addr = r[unopt_rec.locations[i].dwarf_reg_num] +
-                unopt_rec.locations[i].offset;
-            printf("Not implemented - indirect\n");
-            exit(1);
-        } else if (type == CONST_INDEX) {
-            int32_t offset = unopt_rec.locations[i].offset;
-            printf("Not implemented - const index\n");
-            exit(1);
-        } else if (type != CONSTANT) {
-            printf("Not implemented - unknown\n");
-            exit(1);
+            uint64_t unopt_addr = (uint64_t) bp + unopt_rec.locations[i].offset;
+            errx(1, "Not implemented - indirect.\n");
+        } else if (type != CONSTANT && type != CONST_INDEX) {
+            errx(1, "Unknown record - %u. Exiting\n", type);
         }
     }
-    addr = ssize_rec.fun_addr + unopt_rec.instr_offset;
-    uint64_t aux = 0;
-    stack_size_record_t opt_ssize_rec =
-        *get_stack_size_record(stack_map, opt_stk_map_rec_idx);
-    uint64_t new_stack_size = ssize_rec.stack_size;
-    free_stack_map(stack_map);
-    asm volatile("mov %%rsp,%1\n"
-                 "mov %%rbp,%0\n"
-                 "sub %1,%0" : "=r"(stack_size), "=r"(aux) : : );
+
+    // Populate the stack of the optimized function with the values the
+    // unoptimized function expects.
+    for (int i = 0; i < unopt_rec.num_locations - 1; i += 2) {
+        location_type type = unopt_rec.locations[i].kind;
+        if (type == DIRECT) {
+            uint64_t unopt_addr = (uint64_t)bp + unopt_rec.locations[i].offset;
+            uint64_t loc_size =
+                stmap_get_location_value(sm, opt_rec.locations[i + 1], r, bp);
+            memcpy((void *)unopt_addr, direct_locations + i, loc_size);
+        }
+    }
+
+    addr = unopt_size_rec.fun_addr + unopt_rec.instr_offset;
+    stmap_free(sm);
+    free(direct_locations);
     asm volatile("jmp restore_and_jmp");
 }
 
-int get_number() {
+int get_number()
+{
     return 3;
 }
 
 void trace()
 {
-    int y = get_number();
-    int x = 2;
-    putchar(x + '0');
+    float float_val = 2.2;
+    long long ll_val = 100;
+    int int_val_call = get_number();
+    int int_val = 2;
+    double double_val = 12.2;
+    char char_val = 'x';
+
+    putchar(int_val + '0');
     putchar('\n');
-    putchar(y + '0');
-    putchar('\n');
+    printf("int %d\n", int_val_call);
+    printf("long long value %lld\n", ll_val);
     if (get_number() == 3) {
-        putchar(get_number() + '0');
-        putchar('\n');
+        printf("calling get_number: %d\n", get_number());
     }
-    exit(x);
+    printf("float %f\n", float_val);
+    printf("double %lf\n", double_val);
+    printf("char %c\n", char_val);
+    exit(int_val);
 }
 
 int main(int argc, char **argv)

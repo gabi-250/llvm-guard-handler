@@ -22,11 +22,6 @@ $(EXECUTABLE).o: $(EXECUTABLE).ll
 	$(LLC) -filetype=obj $<
 	$(LLC) -filetype=obj $<
 
-%.o: %.s
-	as -o $@ $<
-
-%.o: %.h
-
 %.ll: %.c
 	$(CC) $(PASSFLAGS) -S -emit-llvm $< -O3
 
