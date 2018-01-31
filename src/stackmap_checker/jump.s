@@ -16,7 +16,7 @@ restore_and_jmp:
     mov    r+0x68,%r13
     mov    r+0x70,%r14
     mov    r+0x78,%r15
-    mov    %rbp,%rsp
-    pop    %rbp
-    pop    %rax # pop the return address
-    jmp    *addr
+    push   fun_ret_addr
+    push   %rbp
+    mov    %rsp, %rbp
+    jmp   *addr

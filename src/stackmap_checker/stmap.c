@@ -36,6 +36,8 @@ stack_map_t* stmap_create(uint8_t *start_addr)
         memcpy(rec->locations, addr, rec->num_locations * sizeof(location_t));
         addr += rec->num_locations * sizeof(location_t);
         // padding to align on 8-byte boundary
+        printf("Num loc %lu sizeof loc %d\n", rec->num_locations,
+                sizeof(location_t));
         if ((rec->num_locations * sizeof(location_t)) % 8) {
             addr += sizeof(uint32_t);
         }
@@ -110,6 +112,51 @@ int stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
             return i;
         } else {
             record_count += rec.record_count;
+        }
+    }
+    return -1;
+}
+
+int stmap_get_last_record(stack_map_t *sm, int target_size_rec_idx)
+{
+    int map_idx = -1;
+    uint64_t max_addr = 0;
+    for (size_t i = 0; i < sm->num_rec; ++i) {
+        stack_map_record_t rec = sm->stk_map_records[i];
+        int size_rec_idx = stmap_get_size_record(sm, i);
+        if (size_rec_idx != target_size_rec_idx) {
+            continue;
+        }
+        if (size_rec_idx == -1) {
+            return -1;
+        }
+        uint64_t addr =
+            sm->stk_size_records[size_rec_idx].fun_addr + rec.instr_offset;
+        if (addr > max_addr) {
+            max_addr = addr;
+            map_idx = i;
+        }
+    }
+    return map_idx;
+}
+
+int stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
+{
+    for (size_t i = 0; i < sm->num_rec; ++i) {
+        stack_map_record_t rec = sm->stk_map_records[i];
+        int size_rec_idx = stmap_get_size_record(sm, i);
+        if (size_rec_idx == -1) {
+            errx(1, "No stack map after call!. Exiting.\n");
+        }
+        stack_size_record_t size_rec = sm->stk_size_records[size_rec_idx];
+        int last_rec_idx = stmap_get_last_record(sm, size_rec_idx);
+        uint64_t last_addr = size_rec.fun_addr +
+            sm->stk_map_records[last_rec_idx].instr_offset;
+        if (addr > last_addr) {
+            continue;
+        }
+        if (size_rec.fun_addr + rec.instr_offset < addr) {
+            return i;
         }
     }
     return -1;

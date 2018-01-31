@@ -14,8 +14,7 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
-
-#define TRACE_FUN_NAME "trace"
+#define TRACE_FUN_NAME "get_number"
 #define GUARD_FUN_NAME "__guard_failure"
 #define UNOPT_PREFIX "__unopt_"
 
@@ -45,10 +44,7 @@ struct CheckPointPass: public FunctionPass {
 
   virtual bool runOnFunction(Function &fun) {
     StringRef fun_name = fun.getName();
-    // This pass currently only operates on two functions: `trace` and
-    // `__unopt_trace`. This is because it is supposed to demonstrate how
-    // the runtime can resume the execution of `trace` in `__unopt_trace`.
-    if (!fun_name.endswith(TRACE_FUN_NAME)) {
+    if (!fun_name.endswith(TRACE_FUN_NAME) && !fun_name.endswith("trace")) {
       return false;
     }
     outs() << "Running CheckPointPass on function: " << fun.getName() << '\n';
@@ -72,6 +68,7 @@ struct CheckPointPass: public FunctionPass {
     start_sm_id[fun_name] = sm_id;
     uint64_t call_inst_count = 0;
 
+
     Type *i8ptr_t = PointerType::getUnqual(
         IntegerType::getInt8Ty(mod->getContext()));
     // The callback to call when a guard fails
@@ -79,10 +76,11 @@ struct CheckPointPass: public FunctionPass {
         mod->getFunction(GUARD_FUN_NAME), i8ptr_t);
     for (auto &bb : fun) {
       for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-        if (isa<CallInst>(it) &&
-            cast<CallInst>(*it).getCalledFunction()->getName() == "putchar") {
+        if (isa<ReturnInst>(it)) {
+          LLVMContext &ctx = bb.getContext();
           IRBuilder<> builder(&bb, it);
           uint64_t patchpoint_id;
+
           if (start_sm_id.find(twin_fun) == start_sm_id.end()) {
             // Each stackmap ID is calculated by adding the offset
             // (call_inst_count) to the 'base' ID (curr_sm_id)
@@ -104,6 +102,7 @@ struct CheckPointPass: public FunctionPass {
           // The intrinsic to call: patchpoint, if the current function is
           // trace; stackmap, if the current function is __unopt_trace
           Function *intrinsic = nullptr;
+
           if (!fun_name.startswith(UNOPT_PREFIX)) {
             // The current function is trace -> insert a patchpoint call. The
             // arguments of the patchpoint call are: a callback, an integer
@@ -149,6 +148,28 @@ struct CheckPointPass: public FunctionPass {
           }
           auto call_inst = builder.CreateCall(intrinsic, args);
           ++call_inst_count;
+        } else if (isa<CallInst>(it)) {
+          Function *called_fun = cast<CallInst>(*it).getCalledFunction();
+          if (!called_fun->hasAvailableExternallyLinkage() &&
+              !called_fun->isDeclaration()) {
+            outs() << "Adding SM before " << called_fun->getName() << '\n';
+            uint64_t patchpoint_id;
+            if (start_sm_id.find(twin_fun) == start_sm_id.end()) {
+              patchpoint_id = curr_sm_id + call_inst_count;
+            } else {
+              patchpoint_id = ~(~curr_sm_id + call_inst_count);
+            }
+            // XXX insert after
+            IRBuilder<> builder(&bb, ++it);
+            auto args = std::vector<Value*> { builder.getInt64(patchpoint_id),
+                                              builder.getInt32(13) // XXX shadow
+                                            };
+            auto intrinsic = Intrinsic::getDeclaration(
+                mod, Intrinsic::experimental_stackmap);
+
+            auto call_inst = builder.CreateCall(intrinsic, args);
+            ++call_inst_count;
+          }
         }
       }
     }
@@ -193,4 +214,4 @@ static void registerPass(const PassManagerBuilder &,
   PM.add(new CheckPointPass());
 }
 static RegisterStandardPasses RegisterPass(
-    PassManagerBuilder::EP_EarlyAsPossible, registerPass);
+PassManagerBuilder::EP_EarlyAsPossible, registerPass);

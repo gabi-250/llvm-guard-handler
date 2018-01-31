@@ -16,6 +16,10 @@ uint64_t addr = 0;
 
 // The saved registers.
 uint64_t r[16];
+uint64_t fun_ret_addr = 0;
+
+int get_number(void);
+void trace(void);
 
 /*
  * The guard failure handler.
@@ -70,22 +74,37 @@ void __guard_failure(int64_t sm_id)
         errx(1, "Stack map record not found. Exiting.\n");
     }
 
+
     stack_map_record_t unopt_rec = sm->stk_map_records[unopt_rec_idx];
     stack_map_record_t opt_rec = sm->stk_map_records[opt_rec_idx];
+
+    stack_size_record_t unopt_size_rec =
+        sm->stk_size_records[stmap_get_size_record(sm, unopt_rec_idx)];
+
+    stack_size_record_t opt_size_rec =
+        sm->stk_size_records[stmap_get_size_record(sm, opt_rec_idx)];
+
+    // get the end address of the function in which a guard failed
+    void *end_addr = get_sym_end((void *)opt_size_rec.fun_addr, "trace");
+    uint64_t callback_ret_addr = (uint64_t) __builtin_return_address(0);
+    if (callback_ret_addr >= opt_size_rec.fun_addr &&
+        callback_ret_addr < (uint64_t)end_addr) {
+        printf("A guard failed, but not in an inlined func\n");
+    } else {
+        printf("A guard failed in an inlined function.\n");
+    }
 
     // Save the direct (stack) locations. These need to be restored later,
     // because the process of restoring them might cause other values on the
     // stack of `trace` to be overwritten.
     uint64_t *direct_locations =
         (uint64_t *)calloc(unopt_rec.num_locations, sizeof(uint64_t));
-    stack_size_record_t unopt_size_rec =
-        sm->stk_size_records[stmap_get_size_record(sm, unopt_rec_idx)];
     // Locations are considered in pairs,  which is why the loop counter is
     // incremented by 2. This is because locations stored at odd indices
     // represent the sizes of the other locations. This is important because
     // the runtime needs to know how many bytes to copy from each location to
     // restore the stack state.
-    for (int i = 0; i < unopt_rec.num_locations - 1; i += 2) {
+    for (int i = 1; i < unopt_rec.num_locations - 1; i += 2) {
         location_type type = unopt_rec.locations[i].kind;
         // Get the value of the current location. This value needs to be placed
         // on the stack of the unoptimized function, or in a register.
@@ -111,7 +130,7 @@ void __guard_failure(int64_t sm_id)
 
     // Populate the stack of the optimized function with the values the
     // unoptimized function expects.
-    for (int i = 0; i < unopt_rec.num_locations - 1; i += 2) {
+    for (int i = 1; i < unopt_rec.num_locations - 1; i += 2) {
         location_type type = unopt_rec.locations[i].kind;
         if (type == DIRECT) {
             uint64_t unopt_addr = (uint64_t)bp + unopt_rec.locations[i].offset;
@@ -134,24 +153,10 @@ int get_number()
 
 void trace()
 {
-    float float_val = 2.2;
-    long long ll_val = 100;
-    int int_val_call = get_number();
-    int int_val = 2;
-    double double_val = 12.2;
-    char char_val = 'x';
-
-    putchar(int_val + '0');
+    int x = get_number();
+    putchar(x +'0');
     putchar('\n');
-    printf("int %d\n", int_val_call);
-    printf("long long value %lld\n", ll_val);
-    if (get_number() == 3) {
-        printf("calling get_number: %d\n", get_number());
-    }
-    printf("float %f\n", float_val);
-    printf("double %lf\n", double_val);
-    printf("char %c\n", char_val);
-    exit(int_val);
+    exit(x);
 }
 
 int main(int argc, char **argv)

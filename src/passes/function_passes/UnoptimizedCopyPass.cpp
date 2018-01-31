@@ -7,6 +7,7 @@
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
+#define TRACE_FUN_NAME "trace"
 #define UNOPT_PREFIX "__unopt_"
 
 using namespace llvm;
@@ -43,33 +44,42 @@ struct UnoptimizedCopyPass: public FunctionPass {
    * Replace calls in __unopt_ functions with calls to other __unopt_ functions.
    */
   virtual bool runOnFunction(Function &fun) {
-    if (!fun.getName().startswith(UNOPT_PREFIX)) {
-      return false;
-    }
     outs() << "Running UnoptCopyPass on function: " << fun.getName() << '\n';
-    Module *mod = fun.getParent();
-    for (auto &bb : fun) {
-      for (auto &inst : bb) {
-        if (isa<CallInst>(inst)) {
-          // replace all calls inside this unoptimized function with calls to
-          // the unoptimized versions of the called functions
-          CallInst &call = cast<CallInst>(inst);
-          Function *called_fun = call.getCalledFunction();
-          if (called_fun) {
-            StringRef called_fun_name = called_fun->getName();
-            if (!called_fun_name.startswith(UNOPT_PREFIX)) {
-              // not an unoptimized function -> must call the unoptimized
-              // version of the function instead
-              Function *new_fun =
-                mod->getFunction(UNOPT_PREFIX + called_fun_name.str());
-              if (new_fun) {
-                call.setCalledFunction(new_fun);
+    auto fun_name = fun.getName();
+    if (fun_name == TRACE_FUN_NAME) {
+      fun.addFnAttr(llvm::Attribute::NoInline);
+    } else if (fun.getName().startswith(UNOPT_PREFIX)) {
+      fun.addFnAttr(llvm::Attribute::NoInline);
+      fun.addFnAttr(llvm::Attribute::OptimizeNone);
+      Module *mod = fun.getParent();
+      for (auto &bb : fun) {
+        for (auto &inst : bb) {
+          if (isa<CallInst>(inst)) {
+            // replace each call with a call to the unoptimized version of
+            // the called function
+            CallInst &call = cast<CallInst>(inst);
+            Function *called_fun = call.getCalledFunction();
+            if (called_fun) {
+              StringRef called_fun_name = called_fun->getName();
+              if (!called_fun_name.startswith(UNOPT_PREFIX)) {
+                // not an unoptimized function -> must call the unoptimized
+                // version of the function instead
+                Function *new_fun =
+                  mod->getFunction(UNOPT_PREFIX + called_fun_name.str());
+                if (new_fun) {
+                  call.setCalledFunction(new_fun);
+                }
               }
             }
           }
         }
       }
+    } else if (fun_name == "get_number") {
+      fun.removeFnAttr(llvm::Attribute::OptimizeNone);
+      fun.removeFnAttr(llvm::Attribute::NoInline);
+      fun.addFnAttr(llvm::Attribute::AlwaysInline);
     }
+
     return true;
   }
 };
