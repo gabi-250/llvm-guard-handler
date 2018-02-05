@@ -102,6 +102,7 @@ int stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx);
 uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
                                   uint64_t *regs, void *bp);
 
+uint64_t stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr);
 int stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr);
 void stmap_print_stack_size_records(stack_map_t *);
 void stmap_print_map_record(stack_map_t *sm, uint32_t rec_idx,

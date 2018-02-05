@@ -14,7 +14,7 @@
 #include <llvm/IR/Type.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
-#define TRACE_FUN_NAME "get_number"
+#define TRACE_FUN_NAME "trace"
 #define GUARD_FUN_NAME "__guard_failure"
 #define UNOPT_PREFIX "__unopt_"
 
@@ -42,11 +42,20 @@ struct CheckPointPass: public FunctionPass {
 
   CheckPointPass() : FunctionPass(id) {}
 
+  virtual bool doInitialization(Module &mod) {
+    // Insert the guard failure function.
+    LLVMContext &ctx = mod.getContext();
+    Type* i64 = Type::getInt64Ty(ctx);
+    FunctionType* signature = FunctionType::get(Type::getVoidTy(ctx),
+                                                i64, false);
+    Function *stackmap_func = Function::Create(
+        signature, Function::ExternalLinkage, "__guard_failure", &mod);
+    return true;
+  }
+
   virtual bool runOnFunction(Function &fun) {
     StringRef fun_name = fun.getName();
-    if (!fun_name.endswith(TRACE_FUN_NAME) && !fun_name.endswith("trace")) {
-      return false;
-    }
+
     outs() << "Running CheckPointPass on function: " << fun.getName() << '\n';
 
     // Each function has a corresponding unoptimized version, which starts
@@ -164,11 +173,63 @@ struct CheckPointPass: public FunctionPass {
             auto args = std::vector<Value*> { builder.getInt64(patchpoint_id),
                                               builder.getInt32(13) // XXX shadow
                                             };
-            auto intrinsic = Intrinsic::getDeclaration(
-                mod, Intrinsic::experimental_stackmap);
+            Function *intrinsic = nullptr;
+            if (!fun_name.startswith(UNOPT_PREFIX)) {
 
+              // insert a patchpoint, not a stack map - need extra arguments
+              args.insert(args.end(), { gf_handler_ptr,
+                                        builder.getInt32(1),
+                                        builder.getInt64(patchpoint_id) });
+              intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_patchpoint_void);
+            } else {
+              // unoptimized function
+              intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_stackmap);
+            }
+            for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != it;
+                 ++prev_inst) {
+              // XXX need to accurately identify the live registers
+              if (prev_inst != it &&
+                    prev_inst->use_begin() != prev_inst->use_end()) {
+                args.push_back(&*prev_inst);
+                auto size_of_inst = builder.getInt64(8); // XXX
+                if (isa<AllocaInst>(prev_inst)) {
+                  Type *t = cast<AllocaInst>(*prev_inst).getAllocatedType();
+                  size_of_inst = builder.getInt64(
+                      data_layout.getTypeAllocSize(t));
+                }
+                // also insert the size of the recordec location to know how
+                // many bytes to copy at runtime
+                args.push_back(size_of_inst);
+              }
+            }
             auto call_inst = builder.CreateCall(intrinsic, args);
             ++call_inst_count;
+          } else if (isa<CallInst>(it)) {
+            // Insert a stackmap call after each call in which a guard may
+            // fail, in order to be able to work out the correct return address
+            Function *called_fun = cast<CallInst>(*it).getCalledFunction();
+            if (!called_fun->hasAvailableExternallyLinkage() &&
+                !called_fun->isDeclaration()) {
+              outs() << "Adding SM after call to " << called_fun->getName() << '\n';
+              uint64_t patchpoint_id;
+              if (start_sm_id.find(twin_fun) == start_sm_id.end()) {
+                patchpoint_id = curr_sm_id + call_inst_count;
+              } else {
+                patchpoint_id = ~(~curr_sm_id + call_inst_count);
+              }
+              // XXX insert after
+              IRBuilder<> builder(&bb, ++it);
+              auto args = std::vector<Value*> { builder.getInt64(patchpoint_id),
+                                                builder.getInt32(13) // XXX shadow
+                                              };
+              auto intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_stackmap);
+
+              auto call_inst = builder.CreateCall(intrinsic, args);
+              ++call_inst_count;
+            }
           }
         }
       }

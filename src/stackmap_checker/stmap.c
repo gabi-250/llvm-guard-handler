@@ -140,6 +140,25 @@ int stmap_get_last_record(stack_map_t *sm, int target_size_rec_idx)
     return map_idx;
 }
 
+uint64_t stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr)
+{
+    int call_rec_idx =
+        stmap_first_rec_after_addr(sm, return_addr);
+    if (call_rec_idx == -1) {
+        errx(1, "Call record not found. Exiting.\n");
+    }
+    int unopt_call_rec_idx =
+        stmap_get_map_record(sm,
+                             ~sm->stk_map_records[call_rec_idx].patchpoint_id);
+
+    if (unopt_call_rec_idx == -1) {
+        errx(1, "Unoptimized call record not found. Exiting.\n");
+    }
+    int stk_size_idx = stmap_get_size_record(sm, unopt_call_rec_idx);
+    return sm->stk_map_records[unopt_call_rec_idx].instr_offset +
+        sm->stk_size_records[stk_size_idx].fun_addr;
+}
+
 int stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
 {
     for (size_t i = 0; i < sm->num_rec; ++i) {
@@ -155,7 +174,9 @@ int stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
         if (addr > last_addr) {
             continue;
         }
-        if (size_rec.fun_addr + rec.instr_offset < addr) {
+
+        if (size_rec.fun_addr + rec.instr_offset >= addr
+            && addr > size_rec.fun_addr) {
             return i;
         }
     }

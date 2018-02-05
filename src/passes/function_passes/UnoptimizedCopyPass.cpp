@@ -46,7 +46,7 @@ struct UnoptimizedCopyPass: public FunctionPass {
   virtual bool runOnFunction(Function &fun) {
     outs() << "Running UnoptCopyPass on function: " << fun.getName() << '\n';
     auto fun_name = fun.getName();
-    if (fun_name == TRACE_FUN_NAME) {
+    if (fun_name == TRACE_FUN_NAME || fun_name == "more_indirection") {
       fun.addFnAttr(llvm::Attribute::NoInline);
     } else if (fun.getName().startswith(UNOPT_PREFIX)) {
       fun.addFnAttr(llvm::Attribute::NoInline);
@@ -75,9 +75,8 @@ struct UnoptimizedCopyPass: public FunctionPass {
         }
       }
     } else if (fun_name == "get_number") {
-      fun.removeFnAttr(llvm::Attribute::OptimizeNone);
-      fun.removeFnAttr(llvm::Attribute::NoInline);
-      fun.addFnAttr(llvm::Attribute::AlwaysInline);
+      fun.addFnAttr(llvm::Attribute::NoInline);
+      fun.addFnAttr(llvm::Attribute::OptimizeNone);
     }
 
     return true;

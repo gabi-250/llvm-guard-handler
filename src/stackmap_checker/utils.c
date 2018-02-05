@@ -5,9 +5,11 @@
 #include <fcntl.h>
 #include "utils.h"
 
+#define TRACE_BIN "trace"
+
 Elf64_Ehdr* get_elf_header(const char *section_name)
 {
-    int fd = open("trace", O_RDONLY);
+    int fd = open(TRACE_BIN, O_RDONLY);
     void *data = mmap(NULL,
                       lseek(fd, 0, SEEK_END), // file size
                       PROT_READ,
