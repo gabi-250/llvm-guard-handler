@@ -45,6 +45,7 @@ typedef struct StackMapRecord {
     location_t *locations;
     uint16_t   num_liveouts;
     liveout_t  *liveouts;
+    uint64_t index;
 } stack_map_record_t;
 
 // A record which describes a function which contains a `stackmap` call.
@@ -52,6 +53,7 @@ typedef struct StackSizeRecord {
     uint64_t fun_addr;
     uint64_t stack_size;
     uint64_t record_count;
+    uint64_t index;
 } stack_size_record_t;
 
 typedef struct StackMap {
@@ -69,6 +71,11 @@ typedef struct StackMap {
     stack_map_record_t *stk_map_records;
 } stack_map_t;
 
+typedef struct StackMapPosition {
+    uint32_t stk_size_record_index;
+    uint32_t stk_map_record_index;
+} stack_map_pos_t;
+
 /*
  * Populate a StackMap with the information at the given address.
  *
@@ -84,7 +91,7 @@ void stmap_free(stack_map_t *sm);
 /*
  * Return the stack map record which corresponds to the specified patchpoint.
  */
-int stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id);
+stack_map_record_t* stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id);
 
 /*
  * Return the stack size record associated with the specified stack map record.
@@ -94,7 +101,7 @@ int stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id);
  * This is used to associate each stackmap/patchpoint call with the function it
  * belongs to.
  */
-int stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx);
+stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx);
 
 /*
  * Compute the value of the specified location.
@@ -102,8 +109,8 @@ int stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx);
 uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
                                   uint64_t *regs, void *bp);
 
-uint64_t stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr);
-int stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr);
+stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr);
+stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr);
 void stmap_print_stack_size_records(stack_map_t *);
 void stmap_print_map_record(stack_map_t *sm, uint32_t rec_idx,
                             uint64_t *regs, void *frame_addr);

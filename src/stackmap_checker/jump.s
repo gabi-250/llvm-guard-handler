@@ -16,5 +16,7 @@ restore_and_jmp:
     mov    r+0x68,%r13
     mov    r+0x70,%r14
     mov    r+0x78,%r15
-    push   %rbp
-    jmp   *addr
+    mov    %rbp, %rsp
+    pop    %rbp
+    pop    %rax # pop the return address of __guard_failure
+    jmp    *addr

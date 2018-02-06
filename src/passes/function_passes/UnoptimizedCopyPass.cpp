@@ -75,8 +75,14 @@ struct UnoptimizedCopyPass: public FunctionPass {
         }
       }
     } else if (fun_name == "get_number") {
+        //fun.removeFnAttr(llvm::Attribute::OptimizeNone);
+        //fun.removeFnAttr(llvm::Attribute::NoInline);
+        //fun.addFnAttr(llvm::Attribute::AlwaysInline);
+        //
+        fun.addFnAttr(llvm::Attribute::NoInline);
+        fun.addFnAttr(llvm::Attribute::OptimizeNone);
+    } else if (fun_name == "more_indirection") {
       fun.addFnAttr(llvm::Attribute::NoInline);
-      fun.addFnAttr(llvm::Attribute::OptimizeNone);
     }
 
     return true;
