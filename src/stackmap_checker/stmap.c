@@ -190,33 +190,14 @@ stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
         int last_rec_idx = stmap_get_last_record(sm, size_rec->index);
         uint64_t last_addr = size_rec->fun_addr +
             sm->stk_map_records[last_rec_idx].instr_offset;
-        printf("Looking for addr %p %lu\n", (void *)addr, addr);
-
-        printf("Checking range %p %p\n",
-                (void *) size_rec->fun_addr,
-                (void *)(size_rec->fun_addr + rec.instr_offset)
-                );
         if (addr > last_addr) {
             continue;
         }
 
         if (size_rec->fun_addr + rec.instr_offset >= addr
             && addr > size_rec->fun_addr) {
-
-            printf("%lu > %lu == %d\n",
-                    size_rec->fun_addr + rec.instr_offset,
-                    addr,
-                    size_rec->fun_addr + rec.instr_offset >= addr
-                    );
             // when a guard fails in trace, work out if it failed in the
             // inlined get_number call or in trace
-            printf("Found record %lu after addr %p in fun %p %d\n",
-                    i,
-                    (void *)size_rec->fun_addr + rec.instr_offset,
-                    (void *)size_rec->fun_addr,
-                    (void *)size_rec->fun_addr + rec.instr_offset >= (void *)addr
-
-                    );
             return &sm->stk_map_records[i];
         }
     }

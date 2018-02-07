@@ -45,8 +45,9 @@ struct UnoptimizedCopyPass: public FunctionPass {
    */
   virtual bool runOnFunction(Function &fun) {
     outs() << "Running UnoptCopyPass on function: " << fun.getName() << '\n';
-    auto fun_name = fun.getName();
-    if (fun_name == TRACE_FUN_NAME || fun_name == "more_indirection") {
+    auto funName = fun.getName();
+    if (funName == TRACE_FUN_NAME || funName == "more_indirection"
+        || funName == "get_number") {
       fun.addFnAttr(llvm::Attribute::NoInline);
     } else if (fun.getName().startswith(UNOPT_PREFIX)) {
       fun.addFnAttr(llvm::Attribute::NoInline);
@@ -58,14 +59,14 @@ struct UnoptimizedCopyPass: public FunctionPass {
             // replace each call with a call to the unoptimized version of
             // the called function
             CallInst &call = cast<CallInst>(inst);
-            Function *called_fun = call.getCalledFunction();
-            if (called_fun) {
-              StringRef called_fun_name = called_fun->getName();
-              if (!called_fun_name.startswith(UNOPT_PREFIX)) {
+            Function *calledFun = call.getCalledFunction();
+            if (calledFun) {
+              StringRef calledFunName = calledFun->getName();
+              if (!calledFunName.startswith(UNOPT_PREFIX)) {
                 // not an unoptimized function -> must call the unoptimized
                 // version of the function instead
                 Function *new_fun =
-                  mod->getFunction(UNOPT_PREFIX + called_fun_name.str());
+                  mod->getFunction(UNOPT_PREFIX + calledFunName.str());
                 if (new_fun) {
                   call.setCalledFunction(new_fun);
                 }
@@ -74,17 +75,7 @@ struct UnoptimizedCopyPass: public FunctionPass {
           }
         }
       }
-    } else if (fun_name == "get_number") {
-        //fun.removeFnAttr(llvm::Attribute::OptimizeNone);
-        //fun.removeFnAttr(llvm::Attribute::NoInline);
-        //fun.addFnAttr(llvm::Attribute::AlwaysInline);
-        //
-        fun.addFnAttr(llvm::Attribute::NoInline);
-        fun.addFnAttr(llvm::Attribute::OptimizeNone);
-    } else if (fun_name == "more_indirection") {
-      fun.addFnAttr(llvm::Attribute::NoInline);
     }
-
     return true;
   }
 };

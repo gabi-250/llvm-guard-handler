@@ -18,7 +18,7 @@ extern void restore_and_jmp(void);
 uint64_t addr = 0;
 uint64_t r[16];
 
-int get_direct_locations(stack_map_t *sm, void *bp, stack_map_record_t *recs,
+int get_direct_locations(stack_map_t *sm, uint64_t *bps, stack_map_record_t *recs,
         uint32_t rec_count, uint64_t **direct_locs)
 {
     // Restore the stack
@@ -33,20 +33,22 @@ int get_direct_locations(stack_map_t *sm, void *bp, stack_map_record_t *recs,
         printf("Direct locs %p size %d\n", *direct_locs, new_size);
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects
-        for (int i = 0; i < unopt_rec->num_locations - 1; i += 2) {
-            location_type type = unopt_rec->locations[i].kind;
-            printf("Record %d\n", i);
+        for (int j = 0; j < unopt_rec->num_locations - 1; j += 2) {
+            location_type type = unopt_rec->locations[j].kind;
             uint64_t opt_location_value =
-                stmap_get_location_value(sm, opt_rec.locations[i], r, bp);
+                stmap_get_location_value(sm, opt_rec.locations[j],
+                                         r, (void *)bps[i]);
             if (type == REGISTER) {
-                uint16_t reg_num = unopt_rec->locations[i].dwarf_reg_num;
+                uint16_t reg_num = unopt_rec->locations[j].dwarf_reg_num;
                 uint64_t loc_size =
-                    stmap_get_location_value(sm, opt_rec.locations[i + 1], r, bp);
+                    stmap_get_location_value(sm, opt_rec.locations[j + 1],
+                                             r, (void *)bps[i]);
                 memcpy(r + reg_num, &opt_location_value, loc_size);
             } else if (type == DIRECT) {
                 printf("Direct\n");
                 uint64_t loc_size =
-                    stmap_get_location_value(sm, opt_rec.locations[i + 1], r, bp);
+                    stmap_get_location_value(sm, opt_rec.locations[j + 1],
+                                             r, (void *)bps[i]);
                 printf("At index %d at depth %d saving %lu of size %d\n",
                         num_locations, i, opt_location_value,
                         loc_size);
@@ -54,7 +56,7 @@ int get_direct_locations(stack_map_t *sm, void *bp, stack_map_record_t *recs,
                        loc_size);
                 ++num_locations;
             } else if (type == INDIRECT) {
-                uint64_t unopt_addr = (uint64_t) bp + unopt_rec->locations[i].offset;
+                uint64_t unopt_addr = (uint64_t) bps[i] + unopt_rec->locations[j].offset;
                 errx(1, "Not implemented - indirect.\n");
             } else if (type != CONSTANT && type != CONST_INDEX) {
                 errx(1, "Unknown record - %u. Exiting\n", type);
@@ -94,9 +96,10 @@ void __guard_failure(int64_t sm_id)
     unw_getcontext(&context);
     unw_init_local(&cursor, &context);
     unw_word_t stack_ptr;
-
+    unw_word_t base_ptr;
     // XXX
     uint64_t **ret_addrs = calloc(MAX_CALL_STACK_DEPTH, sizeof(uint64_t *));
+    uint64_t *bps = calloc(MAX_CALL_STACK_DEPTH, sizeof(uint64_t));
     size_t idx = 0;
     while (unw_step(&cursor) > 0) {
         unw_word_t off, pc;
@@ -111,9 +114,13 @@ void __guard_failure(int64_t sm_id)
         if (idx > 0) {
             ret_addrs[idx - 1] = (uint64_t *)((char *)stack_ptr - 8);
         }
+        if (unw_get_reg(&cursor, UNW_TDEP_BP, &base_ptr)) {
+            printf("bp not found\n");
+        }
+        *(bps + idx) = base_ptr;
         idx++;
         if (!strcmp(fun_name, "main")) {
-            // --idx; ??
+            --idx;
             break;
         }
     }
@@ -172,7 +179,7 @@ void __guard_failure(int64_t sm_id)
     }
 
     uint64_t *direct_locations = NULL;
-    int num_locations = get_direct_locations(sm, bp, call_stk_records,
+    int num_locations = get_direct_locations(sm, bps, call_stk_records,
                                              call_stack_depth + 1,
                                              &direct_locations);
     printf("Locations %d\n", num_locations);
@@ -190,22 +197,20 @@ void __guard_failure(int64_t sm_id)
             errx(1, "Optimized stack map record not found.\n");
         }
 
-        printf("Depth %d / %d\n", i, call_stack_depth);
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects
-        for (int i = 0; i < unopt_rec.num_locations - 1; i += 2) {
-            location_type type = unopt_rec.locations[i].kind;
+
+        for (int j = 0; j < unopt_rec.num_locations - 1; j += 2) {
+            location_type type = unopt_rec.locations[j].kind;
             printf("Record %d / %d loc index %d\n",
                     i, unopt_rec.num_locations, loc_index);
             uint64_t opt_location_value = direct_locations[loc_index];
             printf("Opt location val %p\n", (void *)opt_location_value);
             if (type == DIRECT) {
-                uint64_t unopt_addr = (uint64_t)bp + unopt_rec.locations[i].offset;
+                uint64_t unopt_addr = (uint64_t)bps[i] + unopt_rec.locations[j].offset;
                 uint64_t loc_size =
-                    stmap_get_location_value(sm, opt_rec->locations[i + 1], r, bp);
-                printf("Location size %lu\n", loc_size);
-                printf("memcpy %lu @ %p\n", opt_location_value, (void*)unopt_addr);
-                memcpy((void *)unopt_addr, &opt_location_value,
+                    stmap_get_location_value(sm, opt_rec->locations[j + 1], r, bp);
+                memcpy((void *)unopt_addr, (void *)direct_locations + loc_index,
                         loc_size);
                 ++loc_index;
             }
@@ -214,12 +219,14 @@ void __guard_failure(int64_t sm_id)
     // The address to jump to
     addr = unopt_size_rec->fun_addr + unopt_rec->instr_offset;
 
-    /*stmap_free(sm);*/
-    /*free(direct_locations);*/
-
     for (int i = 0; i < call_stack_depth; ++i) {
         printf("* Ret addr %p\n", (void *)*(uint64_t *)ret_addrs[i]);
     }
+    stmap_free(sm);
+    free(direct_locations);
+    free(ret_addrs);
+    free(bps);
+
     asm volatile("jmp restore_and_jmp");
 }
 
