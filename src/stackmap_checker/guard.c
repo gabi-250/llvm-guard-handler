@@ -19,16 +19,23 @@ uint64_t addr = 0;
 uint64_t r[16];
 
 int get_direct_locations(stack_map_t *sm, uint64_t *bps, stack_map_record_t *recs,
-        uint32_t rec_count, uint64_t **direct_locs)
+        uint32_t rec_count, uint64_t **direct_locs, unw_word_t **registers,
+        unw_word_t **new_registers)
 {
+    // The register values of the unopt trace.
+    new_registers = calloc(rec_count, sizeof(unw_word_t *));
     // Restore the stack
     int num_locations = 0;
     uint64_t new_size = 0;
+    // Each record corresponds to a stack frame.
     for (int i = 0; i < rec_count; ++i) {
+
+        new_registers[i] = calloc(16, sizeof(unw_word_t));
         stack_map_record_t opt_rec = recs[i];
         stack_map_record_t *unopt_rec =
             stmap_get_map_record(sm, ~opt_rec.patchpoint_id);
-        new_size += opt_rec.num_locations / 2 * sizeof(uint64_t);
+        memcpy(new_registers[i], registers[i], 16 * sizeof(unw_word_t));
+        new_size += opt_rec.num_locations * sizeof(uint64_t);
         *direct_locs = (uint64_t *)realloc(*direct_locs, new_size);
         printf("Direct locs %p size %d\n", *direct_locs, new_size);
         // Populate the stack of the optimized function with the values the
@@ -37,26 +44,31 @@ int get_direct_locations(stack_map_t *sm, uint64_t *bps, stack_map_record_t *rec
             location_type type = unopt_rec->locations[j].kind;
             uint64_t opt_location_value =
                 stmap_get_location_value(sm, opt_rec.locations[j],
-                                         r, (void *)bps[i]);
+                                         registers[i], (void *)bps[i]);
             if (type == REGISTER) {
                 uint16_t reg_num = unopt_rec->locations[j].dwarf_reg_num;
                 uint64_t loc_size =
                     stmap_get_location_value(sm, opt_rec.locations[j + 1],
-                                             r, (void *)bps[i]);
-                memcpy(r + reg_num, &opt_location_value, loc_size);
+                                             registers[i], (void *)bps[i]);
+                memcpy(new_registers[i] + reg_num,
+                        &opt_location_value, loc_size);
             } else if (type == DIRECT) {
                 printf("Direct\n");
                 uint64_t loc_size =
                     stmap_get_location_value(sm, opt_rec.locations[j + 1],
-                                             r, (void *)bps[i]);
+                                             registers[i], (void *)bps[i]);
                 printf("At index %d at depth %d saving %lu of size %d\n",
                         num_locations, i, opt_location_value,
                         loc_size);
                 memcpy(*direct_locs + num_locations, &opt_location_value,
                        loc_size);
+
+                ++num_locations;
+                memcpy(*direct_locs + num_locations, &loc_size, sizeof(uint64_t));
                 ++num_locations;
             } else if (type == INDIRECT) {
-                uint64_t unopt_addr = (uint64_t) bps[i] + unopt_rec->locations[j].offset;
+                uint64_t unopt_addr = (uint64_t) bps[i] +
+                    unopt_rec->locations[j].offset;
                 errx(1, "Not implemented - indirect.\n");
             } else if (type != CONSTANT && type != CONST_INDEX) {
                 errx(1, "Unknown record - %u. Exiting\n", type);
@@ -91,36 +103,62 @@ void __guard_failure(int64_t sm_id)
                                     "=m"(r[14]), "=m"(r[15]) : : );
     printf("Guard %ld failed!\n", sm_id);
 
+    unw_word_t **registers = calloc(MAX_CALL_STACK_DEPTH, sizeof(unw_word_t *));
+
     unw_cursor_t cursor;
     unw_context_t context;
     unw_getcontext(&context);
     unw_init_local(&cursor, &context);
+
+    unw_cursor_t saved_cursor = cursor;
     unw_word_t stack_ptr;
     unw_word_t base_ptr;
     // XXX
     uint64_t **ret_addrs = calloc(MAX_CALL_STACK_DEPTH, sizeof(uint64_t *));
     uint64_t *bps = calloc(MAX_CALL_STACK_DEPTH, sizeof(uint64_t));
-    size_t idx = 0;
+    size_t frame = 0;
     while (unw_step(&cursor) > 0) {
         unw_word_t off, pc;
         unw_get_reg(&cursor, UNW_REG_IP, &pc);
         if (!pc) {
             break;
         }
-        unw_get_reg(&cursor, UNW_REG_SP, &stack_ptr);
+        if (!registers[frame]) {
+            // 16 registers are saved for each frame
+            registers[frame] = calloc(16, sizeof(unw_word_t));
+        }
+
+        unw_get_reg(&cursor, UNW_X86_64_RAX, &registers[frame][0]);
+        unw_get_reg(&cursor, UNW_X86_64_RDX, &registers[frame][1]);
+        unw_get_reg(&cursor, UNW_X86_64_RCX, &registers[frame][2]);
+        unw_get_reg(&cursor, UNW_X86_64_RBX, &registers[frame][3]);
+        unw_get_reg(&cursor, UNW_X86_64_RSI, &registers[frame][4]);
+        unw_get_reg(&cursor, UNW_X86_64_RDI, &registers[frame][5]);
+        unw_get_reg(&cursor, UNW_X86_64_RBP, &registers[frame][6]);
+        unw_get_reg(&cursor, UNW_X86_64_RSP, &registers[frame][7]);
+        unw_get_reg(&cursor, UNW_X86_64_R8,  &registers[frame][8]);
+        unw_get_reg(&cursor, UNW_X86_64_R9,  &registers[frame][9]);
+        unw_get_reg(&cursor, UNW_X86_64_R10, &registers[frame][10]);
+        unw_get_reg(&cursor, UNW_X86_64_R11, &registers[frame][11]);
+        unw_get_reg(&cursor, UNW_X86_64_R12, &registers[frame][12]);
+        unw_get_reg(&cursor, UNW_X86_64_R13, &registers[frame][13]);
+        unw_get_reg(&cursor, UNW_X86_64_R14, &registers[frame][14]);
+        unw_get_reg(&cursor, UNW_X86_64_R15, &registers[frame][15]);
+        unw_get_reg(&cursor, UNW_REG_SP,     &stack_ptr);
+
+
         // Find base pointer of each function.
         char fun_name[128];
         unw_get_proc_name(&cursor, fun_name, sizeof(fun_name), &off);
-        if (idx > 0) {
-            ret_addrs[idx - 1] = (uint64_t *)((char *)stack_ptr - 8);
-        }
+        ret_addrs[frame] =
+            (uint64_t *)((char *)registers[frame][6] + 8);
         if (unw_get_reg(&cursor, UNW_TDEP_BP, &base_ptr)) {
             printf("bp not found\n");
         }
-        *(bps + idx) = base_ptr;
-        idx++;
+        *(bps + frame) = base_ptr;
+        frame++;
         if (!strcmp(fun_name, "main")) {
-            --idx;
+            --frame;
             break;
         }
     }
@@ -130,43 +168,43 @@ void __guard_failure(int64_t sm_id)
         errx(1, ".llvm_stackmaps section not found. Exiting.\n");
     }
     stack_map_t *sm = stmap_create(stack_map_addr);
-    stmap_print_stack_size_records(sm);
 
     // Overwrite the old return addresses
-    size_t call_stack_depth = idx > 0 ? idx - 1 : 0;
+    size_t call_stack_depth = frame > 0 ? frame - 1 : 0;
 
     // Need call_stack_depth + 1 stack maps (1 = the patchpoint which failed);
-    // This stores the stack map records of the optimized trace
-    stack_map_record_t *call_stk_records = calloc(call_stack_depth + 1,
+    // This stores the stack map records of the unoptimized trace
+    stack_map_record_t *unopt_call_stk_records = calloc(call_stack_depth + 1,
                                                   sizeof(stack_map_record_t));
 
+    stack_map_record_t *opt_call_stk_records = calloc(call_stack_depth + 1,
+                                                  sizeof(stack_map_record_t));
     stack_map_record_t *unopt_rec = stmap_get_map_record(sm, ~sm_id);
     stack_map_record_t *opt_rec = stmap_get_map_record(sm, sm_id);
 
     if (!unopt_rec || !opt_rec) {
         errx(1, "Stack map record not found. Exiting.\n");
     }
-    call_stk_records[0] = *opt_rec;
 
-    void *bp = __builtin_frame_address(1);
-
-    stmap_print_map_record(sm, opt_rec->index, r, bp);
+    // Overwrite the old return addresses and store the stack map records
+    // that correspond to each call which generated this stack trace in
+    // unopt_call_stk_records.
+    unopt_call_stk_records[0] = *unopt_rec;
+    opt_call_stk_records[0] = *opt_rec;
     for (int i = 0; i < call_stack_depth; ++i) {
-        printf("* Ret addr %p\n", (void *)*(uint64_t *)ret_addrs[i]);
         stack_map_pos_t *sm_pos =
             stmap_get_unopt_return_addr(sm, *(uint64_t *)ret_addrs[i]);
         uint64_t unopt_ret_addr =
             sm->stk_size_records[sm_pos->stk_size_record_index].fun_addr +
             sm->stk_map_records[sm_pos->stk_map_record_index].instr_offset;
-        printf("* Using %p instead\n", (void *)unopt_ret_addr);
         *ret_addrs[i] = unopt_ret_addr;
         stack_map_record_t *opt_stk_map_rec =
             stmap_get_map_record(
                 sm,
                 ~sm->stk_map_records[sm_pos->stk_map_record_index].patchpoint_id);
-        call_stk_records[i + 1] =
+        unopt_call_stk_records[i + 1] =
             sm->stk_map_records[sm_pos->stk_map_record_index];
-        stmap_print_map_record(sm, sm_pos->stk_map_record_index, r, bp);
+        opt_call_stk_records[i + 1] = *opt_stk_map_rec;
     }
 
     stack_size_record_t *unopt_size_rec =
@@ -177,56 +215,73 @@ void __guard_failure(int64_t sm_id)
     if (!unopt_size_rec || !opt_size_rec) {
         errx(1, "Record not found.");
     }
-
+    // get the end address of the function in which a guard failed
+    void *end_addr = get_sym_end((void *)opt_size_rec->fun_addr, "trace");
+    uint64_t callback_ret_addr = (uint64_t) __builtin_return_address(0);
+    if (callback_ret_addr >= opt_size_rec->fun_addr &&
+        callback_ret_addr < (uint64_t)end_addr) {
+        printf("A guard failed, but not in an inlined func\n");
+    } else {
+        printf("A guard failed in an inlined function.\n");
+    }
     uint64_t *direct_locations = NULL;
-    int num_locations = get_direct_locations(sm, bps, call_stk_records,
+    unw_word_t **new_registers;
+    int num_locations = get_direct_locations(sm, bps, opt_call_stk_records,
                                              call_stack_depth + 1,
-                                             &direct_locations);
+                                             &direct_locations,
+                                             registers,
+                                             new_registers);
     printf("Locations %d\n", num_locations);
     for (int i = 0; i < num_locations; ++i) {
         printf("Location %d %lu\n", i, direct_locations[i]);
     }
     printf("Restoring SM records\n");
     int loc_index = 0;
+
+    for (int frame = 0; frame < call_stack_depth; ++frame) {
+        printf("BP %p\n", bps[frame]);
+    }
     // Restore all the stacks on the call stack
-    for (int i = 0; i < call_stack_depth + 1; ++i) {
-        stack_map_record_t unopt_rec = call_stk_records[i];
-        stack_map_record_t *opt_rec =
-            stmap_get_map_record(sm, ~unopt_rec.patchpoint_id);
-        if (!opt_rec) {
-            errx(1, "Optimized stack map record not found.\n");
-        }
+    for (int frame = 0; frame < call_stack_depth + 1; ++frame) {
+        stack_map_record_t unopt_rec = unopt_call_stk_records[frame];
+
+    //        stmap_get_map_record(sm, ~unopt_rec.patchpoint_id);
 
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects
-
         for (int j = 0; j < unopt_rec.num_locations - 1; j += 2) {
             location_type type = unopt_rec.locations[j].kind;
-            printf("Record %d / %d loc index %d\n",
-                    i, unopt_rec.num_locations, loc_index);
             uint64_t opt_location_value = direct_locations[loc_index];
             printf("Opt location val %p\n", (void *)opt_location_value);
             if (type == DIRECT) {
-                uint64_t unopt_addr = (uint64_t)bps[i] + unopt_rec.locations[j].offset;
-                uint64_t loc_size =
-                    stmap_get_location_value(sm, opt_rec->locations[j + 1], r, bp);
-                memcpy((void *)unopt_addr, (void *)direct_locations + loc_index,
+
+                uint64_t unopt_addr = (uint64_t)bps[frame] +
+                    unopt_rec.locations[j].offset;
+                uint64_t loc_size = direct_locations[loc_index + 1];
+                memcpy((void *)unopt_addr, direct_locations + loc_index,
                         loc_size);
-                ++loc_index;
+                loc_index += 2;
             }
         }
     }
     // The address to jump to
     addr = unopt_size_rec->fun_addr + unopt_rec->instr_offset;
 
-    for (int i = 0; i < call_stack_depth; ++i) {
-        printf("* Ret addr %p\n", (void *)*(uint64_t *)ret_addrs[i]);
+    frame = 0;
+    while (unw_step(&saved_cursor) > 0) {
+        unw_word_t off, pc;
+        if (!pc) {
+            break;
+        }
+        for (int i = 0; i < 16; ++i) {
+            unw_set_reg(&cursor, i, registers[frame][i]);
+        }
+        ++frame;
     }
     stmap_free(sm);
     free(direct_locations);
     free(ret_addrs);
     free(bps);
-
     asm volatile("jmp restore_and_jmp");
 }
 

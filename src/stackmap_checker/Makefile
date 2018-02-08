@@ -24,4 +24,4 @@ $(EXECUTABLE).o: $(EXECUTABLE).ll
 	$(CC) $(PASSFLAGS) -S -emit-llvm $< -O3
 
 clean:
-	rm -f $(EXECUTABLE) *.o *.ll
+	rm -f $(EXECUTABLE) *.o *.ll /tmp/__stack_resizer_*

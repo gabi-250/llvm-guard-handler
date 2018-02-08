@@ -157,16 +157,17 @@ stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_ad
         stmap_get_map_record(sm, ~call_rec->patchpoint_id);
 
     if (!unopt_call_rec) {
-        errx(1, "Unoptimized call record not found. Exiting.\n");
+        errx(1, "(Unopt) map record not found (PPID = %d). Exiting.\n",
+             ~call_rec->patchpoint_id);
     }
     stack_size_record_t *stk_size_rec =
         stmap_get_size_record(sm, unopt_call_rec->index);
     if (!stk_size_rec) {
-        errx(1, "Unoptimized call record not found. Exiting.\n");
+        errx(1, "(Unopt) size record not found. Exiting.\n");
     }
     stack_map_pos_t *sm_pos = malloc(sizeof(stack_map_pos_t));
-    sm_pos->stk_size_record_index = unopt_call_rec->index;
-    sm_pos->stk_map_record_index = stk_size_rec->index;
+    sm_pos->stk_map_record_index = unopt_call_rec->index;
+    sm_pos->stk_size_record_index = stk_size_rec->index;
     return sm_pos;
 }
 
