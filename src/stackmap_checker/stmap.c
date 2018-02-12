@@ -157,9 +157,10 @@ stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_ad
         stmap_get_map_record(sm, ~call_rec->patchpoint_id);
 
     if (!unopt_call_rec) {
-        errx(1, "(Unopt) map record not found (PPID = %d). Exiting.\n",
+        errx(1, "(Unopt) map record not found (PPID = %lu). Exiting.\n",
              ~call_rec->patchpoint_id);
     }
+
     stack_size_record_t *stk_size_rec =
         stmap_get_size_record(sm, unopt_call_rec->index);
     if (!stk_size_rec) {
@@ -176,7 +177,6 @@ void stmap_print_stack_size_records(stack_map_t *sm)
 {
     for (size_t i = 0; i < sm->num_func; ++i) {
         stack_size_record_t rec = sm->stk_size_records[i];
-        printf("Addr %p size %lu\n", (void *)rec.fun_addr, rec.stack_size);
     }
 }
 
