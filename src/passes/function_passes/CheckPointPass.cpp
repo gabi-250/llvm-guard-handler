@@ -12,8 +12,11 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
+#include <llvm/IR/Dominators.h>
+
 #define TRACE_FUN_NAME "trace"
 #define GUARD_FUN_NAME "__guard_failure"
 #define UNOPT_PREFIX "__unopt_"
@@ -95,6 +98,8 @@ struct CheckPointPass: public FunctionPass {
           }
 
           auto liveVariables = getLiveRegisters(bb, it);
+          // Pass the live locations to the stackmap/patchpoint call. This also
+          // inserts the size of each 'live' location into the stackmap.
           std::move(liveVariables.begin(), liveVariables.end(),
                     std::back_inserter(args));
 
@@ -164,34 +169,32 @@ struct CheckPointPass: public FunctionPass {
   }
 
   static vector<Value *> getLiveRegisters(BasicBlock &bb,
-                                          const BasicBlock::iterator &it) {
+                                          const BasicBlock::iterator &smIt) {
     vector<Value *> args;
-    IRBuilder<> builder(bb.getContext());
-    Module *mod = bb.getParent()->getParent();
+    Function *fun = bb.getParent();
+    Module *mod = fun->getParent();
     DataLayout dataLayout(mod);
-    // Pass the live locations to the stackmap/patchpoint call. This also
-    // inserts the size of each 'live' location into the stackmap.
-    for (BasicBlock::iterator prevInst = bb.begin(); prevInst != it;
-         ++prevInst) {
-      // XXX need to accurately identify the live registers - this
-      // currently assumes each instruction in the current basic block to
-      // represent a live location.
-      if (prevInst != it &&
-            prevInst->use_begin() != prevInst->use_end()) {
-        // Only look at instructions which produce values that have at
-        // least one use. If a result is not used anywhere, it is going
-        // to be removed by future optimization passes, so it should not
-        // be recorded.
-        args.push_back(&*prevInst);
-        auto instSize = builder.getInt64(8); // XXX default size
-        if (isa<AllocaInst>(prevInst)) {
-          Type *t = cast<AllocaInst>(*prevInst).getAllocatedType();
-          instSize = builder.getInt64(
-              dataLayout.getTypeAllocSize(t));
+    DominatorTree DT(*fun);
+    for (auto &bb : *fun) {
+      IRBuilder<> builder(bb.getContext());
+      for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
+        if (!(*it).use_empty() && !DT.dominates(&(*smIt), &*it)) {
+          for (Value::use_iterator use = (*it).use_begin();
+               use != (*it).use_end(); ++use) {
+            if (DT.dominates(&(*smIt), *use)) {
+              args.push_back(&*it);
+              auto instSize = builder.getInt64(8); // XXX default size
+              if (isa<AllocaInst>(it)) {
+                Type *t = cast<AllocaInst>(*it).getAllocatedType();
+                instSize = builder.getInt64(
+                    dataLayout.getTypeAllocSize(t));
+              }
+              // also insert the size of the recorded location to know how
+              // many bytes to copy at runtime
+              args.push_back(instSize);
+            }
+          }
         }
-        // also insert the size of the recorded location to know how
-        // many bytes to copy at runtime
-        args.push_back(instSize);
       }
     }
     return args;

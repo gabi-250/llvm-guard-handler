@@ -19,25 +19,18 @@ uint64_t addr = 0;
 uint64_t r[16];
 
 int get_direct_locations(stack_map_t *sm, uint64_t *bps, stack_map_record_t *recs,
-        uint32_t rec_count, uint64_t **direct_locs, unw_word_t **registers,
-        unw_word_t **new_registers)
+        uint32_t rec_count, uint64_t **direct_locs, unw_word_t **registers)
 {
-    // The register values of the unopt trace.
-    new_registers = calloc(rec_count, sizeof(unw_word_t *));
     // Restore the stack
     int num_locations = 0;
     uint64_t new_size = 0;
     // Each record corresponds to a stack frame.
     for (int i = 0; i < rec_count; ++i) {
-
-        new_registers[i] = calloc(16, sizeof(unw_word_t));
         stack_map_record_t opt_rec = recs[i];
         stack_map_record_t *unopt_rec =
             stmap_get_map_record(sm, ~opt_rec.patchpoint_id);
-        memcpy(new_registers[i], registers[i], 16 * sizeof(unw_word_t));
         new_size += opt_rec.num_locations * sizeof(uint64_t);
         *direct_locs = (uint64_t *)realloc(*direct_locs, new_size);
-        printf("Direct locs %p size %d\n", *direct_locs, new_size);
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects
         for (int j = 0; j < unopt_rec->num_locations - 1; j += 2) {
@@ -45,18 +38,12 @@ int get_direct_locations(stack_map_t *sm, uint64_t *bps, stack_map_record_t *rec
             uint64_t opt_location_value =
                 stmap_get_location_value(sm, opt_rec.locations[j],
                                          registers[i], (void *)bps[i]);
-            if (type == REGISTER) {
-                uint16_t reg_num = unopt_rec->locations[j].dwarf_reg_num;
-                uint64_t loc_size =
-                    stmap_get_location_value(sm, opt_rec.locations[j + 1],
-                                             registers[i], (void *)bps[i]);
-                memcpy(new_registers[i] + reg_num,
-                        &opt_location_value, loc_size);
-            } else if (type == DIRECT) {
+
+            uint64_t loc_size =
+                stmap_get_location_value(sm, opt_rec.locations[j + 1],
+                                         registers[i], (void *)bps[i]);
+            if (type == DIRECT) {
                 printf("Direct\n");
-                uint64_t loc_size =
-                    stmap_get_location_value(sm, opt_rec.locations[j + 1],
-                                             registers[i], (void *)bps[i]);
                 printf("At index %d at depth %d saving %lu of size %d\n",
                         num_locations, i, opt_location_value,
                         loc_size);
@@ -66,11 +53,17 @@ int get_direct_locations(stack_map_t *sm, uint64_t *bps, stack_map_record_t *rec
                 ++num_locations;
                 memcpy(*direct_locs + num_locations, &loc_size, sizeof(uint64_t));
                 ++num_locations;
+            } else if (type == REGISTER) {
+                memcpy(*direct_locs + num_locations, &opt_location_value,
+                       loc_size);
+                ++num_locations;
+                memcpy(*direct_locs + num_locations, &loc_size, sizeof(uint64_t));
+                ++num_locations;
             } else if (type == INDIRECT) {
                 uint64_t unopt_addr = (uint64_t) bps[i] +
                     unopt_rec->locations[j].offset;
                 errx(1, "Not implemented - indirect.\n");
-            } else if (type != CONSTANT && type != CONST_INDEX) {
+            } else if (type != CONSTANT && type != CONST_INDEX && type != REGISTER) {
                 errx(1, "Unknown record - %u. Exiting\n", type);
             }
         }
@@ -225,17 +218,11 @@ void __guard_failure(int64_t sm_id)
         printf("A guard failed in an inlined function.\n");
     }
     uint64_t *direct_locations = NULL;
-    unw_word_t **new_registers;
     int num_locations = get_direct_locations(sm, bps, opt_call_stk_records,
                                              call_stack_depth + 1,
                                              &direct_locations,
-                                             registers,
-                                             new_registers);
-    printf("Locations %d\n", num_locations);
-    for (int i = 0; i < num_locations; ++i) {
-        printf("Location %d %lu\n", i, direct_locations[i]);
-    }
-    printf("Restoring SM records\n");
+                                             registers);
+
     int loc_index = 0;
 
     for (int frame = 0; frame < call_stack_depth; ++frame) {
@@ -245,28 +232,29 @@ void __guard_failure(int64_t sm_id)
     for (int frame = 0; frame < call_stack_depth + 1; ++frame) {
         stack_map_record_t unopt_rec = unopt_call_stk_records[frame];
 
-    //        stmap_get_map_record(sm, ~unopt_rec.patchpoint_id);
-
+        stmap_print_map_record(sm, unopt_rec.index,
+                               registers[frame], (void *)bps[frame]);
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects
         for (int j = 0; j < unopt_rec.num_locations - 1; j += 2) {
             location_type type = unopt_rec.locations[j].kind;
             uint64_t opt_location_value = direct_locations[loc_index];
-            printf("Opt location val %p\n", (void *)opt_location_value);
+            uint64_t loc_size = direct_locations[loc_index + 1];
             if (type == DIRECT) {
-
                 uint64_t unopt_addr = (uint64_t)bps[frame] +
                     unopt_rec.locations[j].offset;
-                uint64_t loc_size = direct_locations[loc_index + 1];
-                memcpy((void *)unopt_addr, direct_locations + loc_index,
+                memcpy((void *)unopt_addr, &opt_location_value,
                         loc_size);
+                loc_index += 2;
+            } else if (type == REGISTER) {
+                uint64_t reg_num = unopt_rec.locations[j].dwarf_reg_num;
+                memcpy(registers[frame] + reg_num, &opt_location_value, loc_size);
                 loc_index += 2;
             }
         }
     }
     // The address to jump to
     addr = unopt_size_rec->fun_addr + unopt_rec->instr_offset;
-
     frame = 0;
     while (unw_step(&saved_cursor) > 0) {
         unw_word_t off, pc;
@@ -274,7 +262,9 @@ void __guard_failure(int64_t sm_id)
             break;
         }
         for (int i = 0; i < 16; ++i) {
-            unw_set_reg(&cursor, i, registers[frame][i]);
+            if (i != UNW_X86_64_RSP && i != UNW_X86_64_RBP) {
+                unw_set_reg(&cursor, i, registers[frame][i]);
+            }
         }
         ++frame;
     }

@@ -27,6 +27,7 @@ void trace()
 {
     char four = '4';
     int y = 155;
+    double k = 8.2345;
     int x = get_number(0);
     putchar(x +'0');
     putchar('\n');
@@ -34,6 +35,9 @@ void trace()
     putchar('\n');
 
     putchar(y % 10 + '0');
+    putchar('\n');
+
+    putchar((int)k + '0');
     putchar('\n');
 }
 
