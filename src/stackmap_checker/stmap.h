@@ -71,6 +71,8 @@ typedef struct StackMap {
     stack_map_record_t *stk_map_records;
 } stack_map_t;
 
+// Identifies an address using a stack map record and a stack size record. This
+// is the address of a stackmap/patchpoint call.
 typedef struct StackMapPosition {
     uint32_t stk_size_record_index;
     uint32_t stk_map_record_index;
@@ -109,8 +111,25 @@ stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
 uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
                                   uint64_t *regs, void *bp);
 
+/*
+ * Return the stack map/size record pair which describes the return address in an
+ * unoptimized function which corresponds to `return_addr`.
+ *
+ * `return_addr` is expected to be the return address of an optimized function.
+ */
 stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr);
+
+/*
+ * Return the first stack map record located at an address greater than `addr`.
+ */
 stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr);
+
+/*
+ * Return the last stack map record associated with the specified stack size
+ * record.
+ */
+stack_map_record_t* stmap_get_last_record(stack_map_t *sm,
+                                          stack_size_record_t target_size_rec);
 void stmap_print_stack_size_records(stack_map_t *);
 void stmap_print_map_record(stack_map_t *sm, uint32_t rec_idx,
                             uint64_t *regs, void *frame_addr);

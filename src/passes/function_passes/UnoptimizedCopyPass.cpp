@@ -46,8 +46,8 @@ struct UnoptimizedCopyPass: public FunctionPass {
   virtual bool runOnFunction(Function &fun) {
     outs() << "Running UnoptCopyPass on function: " << fun.getName() << '\n';
     auto funName = fun.getName();
-    if (funName == TRACE_FUN_NAME || funName == "more_indirection"
-        || funName == "get_number") {
+    if (funName == TRACE_FUN_NAME) {
+      // XXX To try out the code, disable inlining for all functions.
       fun.addFnAttr(llvm::Attribute::NoInline);
     } else if (fun.getName().startswith(UNOPT_PREFIX)) {
       fun.addFnAttr(llvm::Attribute::NoInline);
@@ -56,15 +56,15 @@ struct UnoptimizedCopyPass: public FunctionPass {
       for (auto &bb : fun) {
         for (auto &inst : bb) {
           if (isa<CallInst>(inst)) {
-            // replace each call with a call to the unoptimized version of
-            // the called function
+            // Replace each call in this function with a call to the
+            // unoptimized version of the called function.
             CallInst &call = cast<CallInst>(inst);
             Function *calledFun = call.getCalledFunction();
             if (calledFun) {
               StringRef calledFunName = calledFun->getName();
               if (!calledFunName.startswith(UNOPT_PREFIX)) {
-                // not an unoptimized function -> must call the unoptimized
-                // version of the function instead
+                // This is not an unoptimized function -> call the unoptimized
+                // version of this function instead.
                 Function *new_fun =
                   mod->getFunction(UNOPT_PREFIX + calledFunName.str());
                 if (new_fun) {

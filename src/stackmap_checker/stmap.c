@@ -19,6 +19,7 @@ stack_map_t* stmap_create(uint8_t *start_addr)
     for (size_t i = 0; i < sm->num_func; ++i) {
         memcpy(sm->stk_size_records + i, addr,
                sizeof(stack_size_record_t) - sizeof(uint64_t));
+        // Also store the index of each record.
         sm->stk_size_records[i].index = i;
         // Need to subtract the size of index (it is not part of the actual SM)
         addr += sizeof(stack_size_record_t) - sizeof(uint64_t);
@@ -30,7 +31,6 @@ stack_map_t* stmap_create(uint8_t *start_addr)
             sm->num_rec, sizeof(stack_map_record_t));
     size_t rec_header_size = sizeof(uint64_t) + sizeof(uint32_t)
         + 2 * sizeof(uint16_t);
-
     for (size_t i = 0; i < sm->num_rec; ++i) {
         stack_map_record_t *rec = sm->stk_map_records + i;
         // copy the first 4 fields
@@ -44,20 +44,18 @@ stack_map_t* stmap_create(uint8_t *start_addr)
         if ((rec->num_locations * sizeof(location_t)) % 8) {
             addr += sizeof(uint32_t);
         }
-
         addr += sizeof(uint16_t); // padding
         memcpy(&rec->num_liveouts, addr, sizeof(uint16_t));
         addr += sizeof(uint16_t);
         rec->liveouts = (liveout_t *)calloc(rec->num_liveouts,
                                             sizeof(liveout_t));
         memcpy(rec->liveouts, addr, sizeof(liveout_t) * rec->num_liveouts);
-
         addr += sizeof(liveout_t) * rec->num_liveouts;
         // padding to align on 8-byte boundary
         if ((2 * sizeof(uint16_t) + sizeof(liveout_t) * rec->num_liveouts) % 8) {
             addr += sizeof(uint32_t);
         }
-
+        // Also store the index of each record.
         rec->index = i;
     }
     return sm;
@@ -124,26 +122,27 @@ stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
     return NULL;
 }
 
-int stmap_get_last_record(stack_map_t *sm, int target_size_rec_idx)
+stack_map_record_t* stmap_get_last_record(stack_map_t *sm,
+                                          stack_size_record_t target_size_rec)
 {
-    int map_idx = -1;
+    stack_map_record_t* last_rec = NULL;
     uint64_t max_addr = 0;
     for (size_t i = 0; i < sm->num_rec; ++i) {
         stack_map_record_t rec = sm->stk_map_records[i];
         stack_size_record_t *size_rec = stmap_get_size_record(sm, i);
         if (!size_rec) {
-            return -1;
+            return NULL;
         }
-        if (size_rec->index != target_size_rec_idx) {
+        if (size_rec->index != target_size_rec.index) {
             continue;
         }
         uint64_t addr = size_rec->fun_addr + rec.instr_offset;
         if (addr > max_addr) {
             max_addr = addr;
-            map_idx = i;
+            last_rec = &sm->stk_map_records[i];
         }
     }
-    return map_idx;
+    return last_rec;
 }
 
 stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr)
@@ -172,7 +171,6 @@ stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_ad
     return sm_pos;
 }
 
-
 void stmap_print_stack_size_records(stack_map_t *sm)
 {
     for (size_t i = 0; i < sm->num_func; ++i) {
@@ -188,17 +186,14 @@ stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
         if (!size_rec) {
             errx(1, "No stack map after call!. Exiting.\n");
         }
-        int last_rec_idx = stmap_get_last_record(sm, size_rec->index);
-        uint64_t last_addr = size_rec->fun_addr +
-            sm->stk_map_records[last_rec_idx].instr_offset;
+        stack_map_record_t *last_rec =
+            stmap_get_last_record(sm, *size_rec);
+        uint64_t last_addr = size_rec->fun_addr + last_rec->instr_offset;
         if (addr > last_addr) {
             continue;
         }
-
         if (size_rec->fun_addr + rec.instr_offset >= addr
             && addr > size_rec->fun_addr) {
-            // when a guard fails in trace, work out if it failed in the
-            // inlined get_number call or in trace
             return &sm->stk_map_records[i];
         }
     }
