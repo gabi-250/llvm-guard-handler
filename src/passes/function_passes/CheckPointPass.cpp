@@ -12,170 +12,214 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
+#include <llvm/IR/Dominators.h>
 
 #define TRACE_FUN_NAME "trace"
 #define GUARD_FUN_NAME "__guard_failure"
 #define UNOPT_PREFIX "__unopt_"
 
 using namespace llvm;
+using std::vector;
+using std::map;
+using std::pair;
 
 namespace {
 
 /*
- * Insert a stackmap call before each call to `putchar`.
+ * Insert a `stackmap` call after each call to record its return address.
  *
- * This only runs on `trace` and `__unopt_trace`. All other functions are
- * ignored.
+ * The unoptimized version of each function contains the same number of
+ * `llvm.experimental.stackmap` calls as the original (user-defined) version.
+ * Knowing the ID of a `stackmap` call in the optimized version of the function,
+ * the ID of the corresponding call in the unoptimized version can be obtained
+ * by calculating the logical negation of the ID.
  */
 struct CheckPointPass: public FunctionPass {
   static char id;
 
-  // The unique identifier of the next stackmap call.
-  static uint64_t sm_id;
-
-  // Map the function name to the ID of the first stackmap/patchpoint call
+  // Map each function name to the patchpoint IDs of the stackmap calls
   // in the function. This is used to ensure the runtime can associate the
   // stackmap calls inside each function with stackmap calls from the
-  // unoptimized version of the function
-  static std::map<StringRef, uint64_t> start_sm_id;
+  // unoptimized version of the function.
+  static map<StringRef, vector<uint64_t>> stackMaps;
 
   CheckPointPass() : FunctionPass(id) {}
 
+  virtual bool doInitialization(Module &mod) {
+    // Declare the guard failure function. This is necessary because the
+    // `__guard_failure` function is not defined in the current module.
+    LLVMContext &ctx = mod.getContext();
+    Type* i64 = Type::getInt64Ty(ctx);
+    FunctionType* signature = FunctionType::get(Type::getVoidTy(ctx),
+                                                i64, false);
+    Function *stackmap_func = Function::Create(
+        signature, Function::ExternalLinkage, "__guard_failure", &mod);
+    return true;
+  }
+
   virtual bool runOnFunction(Function &fun) {
-    StringRef fun_name = fun.getName();
-    // This pass currently only operates on two functions: `trace` and
-    // `__unopt_trace`. This is because it is supposed to demonstrate how
-    // the runtime can resume the execution of `trace` in `__unopt_trace`.
-    if (!fun_name.endswith(TRACE_FUN_NAME)) {
-      return false;
-    }
+    StringRef funName = fun.getName();
     outs() << "Running CheckPointPass on function: " << fun.getName() << '\n';
-
-    // Each function has a corresponding unoptimized version, which starts
-    // with the `__unopt_` prefix (the 'twin').
-    StringRef twin_fun = getTwinName(fun_name);
-
-    // The next stackmap ID to assign
-    uint64_t curr_sm_id = sm_id;
-    if (start_sm_id.find(twin_fun) != start_sm_id.end()) {
-      // If the 'twin' of this function has already been processed, index
-      // stackmap calls starting from ~ID, where ID is the identifier of the
-      // first stackmap call in the 'twin'
-      curr_sm_id = ~start_sm_id[twin_fun];
-    }
-
     Module *mod = fun.getParent();
-    DataLayout data_layout(mod);
-    // sm_id is the ID of the first stackmap call in this function
-    start_sm_id[fun_name] = sm_id;
-    uint64_t call_inst_count = 0;
-
     Type *i8ptr_t = PointerType::getUnqual(
         IntegerType::getInt8Ty(mod->getContext()));
-    // The callback to call when a guard fails
-    Constant* gf_handler_ptr = ConstantExpr::getBitCast(
+    // The callback to call when a guard fails.
+    Constant* guardHandler = ConstantExpr::getBitCast(
         mod->getFunction(GUARD_FUN_NAME), i8ptr_t);
     for (auto &bb : fun) {
       for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-        if (isa<CallInst>(it) &&
-            cast<CallInst>(*it).getCalledFunction()->getName() == "putchar") {
+        // XXX This is where the guard must fail (an arbitrary instruction in
+        // the "more_indirection" function).
+        if (funName.endswith("more_indirection") && isa<ReturnInst>(it)) {
+          LLVMContext &ctx = bb.getContext();
           IRBuilder<> builder(&bb, it);
-          uint64_t patchpoint_id;
-          if (start_sm_id.find(twin_fun) == start_sm_id.end()) {
-            // Each stackmap ID is calculated by adding the offset
-            // (call_inst_count) to the 'base' ID (curr_sm_id)
-            patchpoint_id = curr_sm_id + call_inst_count;
-          } else {
-            // If the 'twin' of this function has already been processed,
-            // make sure the ID of each stackmap call in this function can be
-            // obtained from an ID of a stackmap call in the 'twin', by
-            // negating the ID. For example, the patch point with ID `0`
-            // corresponds to the patchpoint with ID `~0 = -1`.
-            patchpoint_id = ~(~curr_sm_id + call_inst_count);
-          }
+          uint64_t PPID = getNextPatchpointID(funName);
           // The first two arguments of a stackmap/patchpoint intrinsic call
-          // must be the unique identifier of the call and the number of bytes
-          // in the shadow of the call
-          auto args = std::vector<Value*> { builder.getInt64(patchpoint_id),
-                                            builder.getInt32(13) // XXX shadow
-                                          };
+          // are the unique identifier of the call, and the number of bytes
+          // in the shadow of the call.
+          auto args = vector<Value*> { builder.getInt64(PPID),
+                                       builder.getInt32(13) // XXX shadow
+                                      };
           // The intrinsic to call: patchpoint, if the current function is
-          // trace; stackmap, if the current function is __unopt_trace
+          // optimized; stackmap, if the current function is unoptimized.
           Function *intrinsic = nullptr;
-          if (!fun_name.startswith(UNOPT_PREFIX)) {
-            // The current function is trace -> insert a patchpoint call. The
-            // arguments of the patchpoint call are: a callback, an integer
-            // which represents the number of arguments of the callback, and
-            // the arguments to pass to the callback.
+          if (!funName.startswith(UNOPT_PREFIX)) {
+            // The current function is an optimized one -> insert a patchpoint
+            // call. The arguments of the patchpoint call are: a callback, an
+            // integer which represents the number of arguments of the
+            // callback, and the arguments to pass to the callback.
             args.insert(args.end(),
-                        { gf_handler_ptr,      // the callback
-                          builder.getInt32(1), // the callback has one argument
-                          builder.getInt64(patchpoint_id) // the argument
+                        { guardHandler,          // the callback
+                          builder.getInt32(1),   // the callback has one argument
+                          builder.getInt64(PPID) // the argument
                         });
             intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_patchpoint_void);
           } else {
-            // The function is __unopt_trace -> insert a stackmap call instead
-            // of a patchpoint call
+            // The function is not optimized -> insert a stackmap call instead
+            // of a patchpoint call.
             intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_stackmap);
           }
+          auto liveVariables = getLiveRegisters(*it);
           // Pass the live locations to the stackmap/patchpoint call. This also
           // inserts the size of each 'live' location into the stackmap.
-          for (BasicBlock::iterator prev_inst = bb.begin(); prev_inst != it;
-               ++prev_inst) {
-            // XXX need to accurately identify the live registers - this
-            // currently assumes each instruction in the current basic block to
-            // represent a live location.
-            if (prev_inst != it &&
-                  prev_inst->use_begin() != prev_inst->use_end()) {
-              // Only look at instructions which produce values that have at
-              // least one use. If a result is not used anywhere, it is going
-              // to be removed by future optimization passes, so it should not
-              // be recorded.
-              args.push_back(&*prev_inst);
-              auto size_of_inst = builder.getInt64(8); // XXX default size
-              if (isa<AllocaInst>(prev_inst)) {
-                Type *t = cast<AllocaInst>(*prev_inst).getAllocatedType();
-                size_of_inst = builder.getInt64(
-                    data_layout.getTypeAllocSize(t));
-              }
-              // also insert the size of the recorded location to know how
-              // many bytes to copy at runtime
-              args.push_back(size_of_inst);
-            }
-          }
+          std::move(liveVariables.begin(), liveVariables.end(),
+                    std::back_inserter(args));
           auto call_inst = builder.CreateCall(intrinsic, args);
-          ++call_inst_count;
+        } else if (isa<CallInst>(it)) {
+          // Insert a stackmap call after each function call inside which a
+          // guard may fail. This enables the runtime to work out the return
+          // address of the function.
+          Function *calledFun = cast<CallInst>(*it).getCalledFunction();
+          if (!calledFun->hasAvailableExternallyLinkage() &&
+              !calledFun->isDeclaration()) {
+            uint64_t PPID = getNextPatchpointID(funName);
+            IRBuilder<> builder(&bb, ++it);
+            auto args = vector<Value*> { builder.getInt64(PPID),
+                                         builder.getInt32(13)  // XXX shadow
+                                       };
+            auto liveVariables = getLiveRegisters(*it);
+            std::move(liveVariables.begin(), liveVariables.end(),
+                      std::back_inserter(args));
+            auto intrinsic = Intrinsic::getDeclaration(
+                mod, Intrinsic::experimental_stackmap);
+
+            auto call_inst = builder.CreateCall(intrinsic, args);
+          }
         }
       }
-    }
-    if (start_sm_id.find(twin_fun) == start_sm_id.end()) {
-      // The 'twin' of the function has not yet been processed, which means
-      // sm_id was used as a 'base' ID, so it needs to be updated, since
-      // future functions can no longer use it as a 'base'.
-      sm_id = start_sm_id[fun_name] + call_inst_count;
     }
     return true;
   }
 
   /*
-   * Return the name of 'twin' function of function with the specified name.
+   * Return the name of the 'twin' of the specified function.
    *
-   * If name is the name of an optimized function, then the name of the
-   * function's 'twin' is the name prefixed with '__unopt_'. If the specified
-   * name is the name of an unoptimized function, then this returns the name
-   * of the optimized function (it strips off the '__unopt_' prefix).
+   * If the specified name is the name of an optimized function, then the name
+   * of the function's 'twin' is the name prefixed with '__unopt_'. If the
+   * specified name is the name of an unoptimized function, then this returns
+   * the name of the optimized function (it strips off the '__unopt_' prefix).
    *
-   * "fun" -> "__unopt_fun" or "__unopt_fun" -> "fun"
+   * Example: "fun" -> "__unopt_fun" or "__unopt_fun" -> "fun"
    */
-  static StringRef getTwinName(StringRef name) {
+  static std::string getTwinName(StringRef name) {
     if (name.startswith(UNOPT_PREFIX)) {
-      return name.substr(StringRef(UNOPT_PREFIX).size());
+      return name.drop_front(StringRef(UNOPT_PREFIX).size()).str();
     }
-    return StringRef(UNOPT_PREFIX + name.str());
+    return UNOPT_PREFIX + name.str();
+  }
+
+  /*
+   * Generate a new patchpoint ID for the specified function.
+   */
+  static uint64_t getNextPatchpointID(StringRef funName) {
+    uint64_t nextPatchpointID = 0;
+    if (!stackMaps.empty()) {
+        std::string twinFun = getTwinName(funName);
+        if (stackMaps.find(twinFun) == stackMaps.end()) {
+          // The `twin` of the function doesn't have any IDs allocated yet.
+          // This means the next ID is equal to the last ID generated for the
+          // current function plus one.
+          auto maxPos = std::max_element(stackMaps.begin(), stackMaps.end(),
+              [] (const pair<StringRef, vector<uint64_t>> &a,
+                    const pair<StringRef, vector<uint64_t>> &b) {
+                return a.second.back() < b.second.back();
+              });
+          nextPatchpointID = (*maxPos).second.back() + 1;
+        } else {
+          // Find (in the `twin` function) the ID of the `stackmap` which
+          // corresponds to the ID currently being generated. Negate the ID
+          // found, to obtain a new ID for the current function.
+          size_t lastIndex = stackMaps[funName].size();
+          nextPatchpointID = ~stackMaps[twinFun][lastIndex];
+        }
+    }
+    stackMaps[funName].push_back(nextPatchpointID);
+    return nextPatchpointID;
+  }
+
+  /*
+   * Return the list of registers which are live across the given instruction.
+   */
+  static vector<Value *> getLiveRegisters(Instruction &instr) {
+    vector<Value *> args;
+    Function *fun = instr.getFunction();
+    Module *mod = fun->getParent();
+    DataLayout dataLayout(mod);
+    DominatorTree DT(*fun);
+    // Iterarate over each instruction in the function.
+    for (auto &bb : *fun) {
+      IRBuilder<> builder(bb.getContext());
+      for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
+        if (!(*it).use_empty() && !DT.dominates(&instr, &*it)) {
+          for (Value::use_iterator use = (*it).use_begin();
+               use != (*it).use_end(); ++use) {
+            // This instruction is defined 'above' `instr` and used 'below'
+            // `instr`, so it is live across `instr`.
+            if (DT.dominates(&instr, *use)) {
+              args.push_back(&*it);
+              auto instSize = builder.getInt64(8); // XXX default size
+              // The runtime may need to copy more than 8 bytes starting at
+              // this location. We can store the size of the object being
+              // allocated in the stack map.
+              if (isa<AllocaInst>(it)) {
+                Type *t = cast<AllocaInst>(*it).getAllocatedType();
+                instSize = builder.getInt64(
+                    dataLayout.getTypeAllocSize(t));
+              }
+              // Also insert the size of the recorded location to know how
+              // many bytes to copy at runtime.
+              args.push_back(instSize);
+            }
+          }
+        }
+      }
+    }
+    return args;
   }
 
 };
@@ -183,8 +227,7 @@ struct CheckPointPass: public FunctionPass {
 } // end anonymous namespace
 
 char CheckPointPass::id = 0;
-uint64_t CheckPointPass::sm_id = 0;
-std::map<StringRef, uint64_t> CheckPointPass::start_sm_id;
+map<StringRef, vector<uint64_t>> CheckPointPass::stackMaps;
 
 // Automatically enable the pass.
 // http://adriansampson.net/blog/clangpass.html
