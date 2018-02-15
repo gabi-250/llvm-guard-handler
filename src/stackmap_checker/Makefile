@@ -3,7 +3,7 @@ LLC = ../llvm/build/bin/llc
 CPOINTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libCheckPointPass.so
 UNOPTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libUnoptimizedCopyPass.so
 PASSFLAGS := $(CPOINTPASS) $(UNOPTPASS)
-OBJS := utils.o stmap.o jump.o guard.o
+OBJS := utils.o stmap.o jump.o guard.o call_stack_state.o
 EXECUTABLE := trace
 
 .PHONY: all clean
