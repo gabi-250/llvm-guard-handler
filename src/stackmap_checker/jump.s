@@ -1,4 +1,5 @@
 .global jmp_to_addr
+.global restore_inlined
 
 # Jumps to addr, cleaning up after __guard_failure
 jmp_to_addr:
@@ -19,4 +20,15 @@ jmp_to_addr:
     mov    %rbp,   %rsp
     pop    %rbp
     add    $0x8,   %rsp # pop the return address of __guard_failure
+    jmp    *addr
+
+restore_inlined:
+    mov    restored_stack_size, %rsi
+    mov    restored_start_addr, %rdi
+    mov    %rbp, %rsp
+    pop    %rbp
+    add    $0x8,   %rsp # pop the return address of __guard_failure
+    mov    %rdi, %rbp
+    mov    %rbp, %rsp
+    sub    %rsi, %rsp
     jmp    *addr

@@ -19,6 +19,12 @@ typedef struct CallStackState {
     uint32_t depth;
 } call_stack_state_t;
 
+typedef struct RestoredStackSegment {
+    uint64_t start_addr;
+    uint64_t total_size;
+    uint64_t size;
+} restored_segment_t;
+
 /*
  * Return the state of the call stack.
  */
@@ -27,6 +33,10 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
 
 void free_call_stack_state(call_stack_state_t *state);
 
+void get_restored_state(stack_map_t *sm,
+        call_stack_state_t *state,
+        restored_segment_t seg, uint64_t *saved_ret_addrs,
+        uint32_t *sizes);
 /*
  * Return all the locations recorded in the stack map `sm` for each of
  * the frames in `state`. The direct locations need to be restored later.
@@ -57,5 +67,12 @@ void collect_map_records(call_stack_state_t *state, stack_map_t *sm);
  * Inserts the specified record at the head of the list of records in `state`.
  */
 void append_record(call_stack_state_t *state, stack_map_record_t first_rec);
+
+/*
+ * Construct a state which represents the frames in `dest` followed by those in
+ * `state`.
+ */
+void combine_states(call_stack_state_t *dest, call_stack_state_t *state,
+                    stack_map_record_t first_rec);
 
 #endif // CALL_STACK_STATE_H

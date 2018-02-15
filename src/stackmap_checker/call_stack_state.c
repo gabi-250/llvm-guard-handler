@@ -104,6 +104,40 @@ void free_call_stack_state(call_stack_state_t *state)
     free(state);
 }
 
+void get_restored_state(stack_map_t *sm,
+        call_stack_state_t *state,
+        restored_segment_t seg, uint64_t *saved_ret_addrs,
+        uint32_t *sizes)
+{
+    uint64_t *new_ret_addrs = calloc(state->depth, sizeof(uint64_t));
+    unw_word_t *new_bps = calloc(state->depth, sizeof(unw_word_t));
+    unw_word_t **new_registers = calloc(state->depth, sizeof(unw_word_t *));
+    // now add the return addresses on the new 'stack' and save the bps
+    // start with the high address
+    char *cur_bp = (char *) seg.start_addr + seg.total_size;
+    for (size_t i = 0; i < state->depth; ++i) {
+
+        cur_bp -= 8;
+        // returns in __unopt_more_indirection, where the PP failed
+        // must add that as the first stack size
+        new_ret_addrs[i] = (uint64_t)(cur_bp + 8);
+        *(uint64_t *)new_ret_addrs[i] = saved_ret_addrs[i];
+        new_registers[i] = calloc(16, sizeof(unw_word_t));
+
+        new_bps[i] = (uint64_t)cur_bp;
+
+        if (i > 0) {
+            *(uint64_t *)new_bps[i - 1] = new_bps[i];
+        }
+        cur_bp -= sizes[i];
+    }
+    *(uint64_t *)new_bps[state->depth - 1] = state->bps[0];
+
+    state->ret_addrs = new_ret_addrs;
+    state->bps       = new_bps;
+    state->registers = new_registers;
+}
+
 size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
                      uint64_t **locs)
 {
@@ -117,6 +151,9 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
             stmap_get_map_record(sm, ~opt_rec.patchpoint_id);
         num_locations += opt_rec.num_locations;
         new_size = num_locations * sizeof(uint64_t);
+        if (!new_size) {
+            continue;
+        }
         *locs = (uint64_t *)realloc(*locs, new_size);
 
         // Populate the stack of the optimized function with the values the
@@ -236,5 +273,30 @@ void restore_register_state(call_stack_state_t *state, uint64_t r[])
     for (size_t i = 0; i < 16; ++i) {
         r[i] = (uint64_t)state->registers[0][i];
     }
+}
+
+void combine_states(call_stack_state_t *dest, call_stack_state_t *state,
+                    stack_map_record_t first_rec)
+{
+    uint32_t new_depth = dest->depth;
+    new_depth += state->depth;
+    dest->ret_addrs = realloc(dest->ret_addrs, new_depth * sizeof(uint64_t));
+    dest->bps = realloc(dest->bps, new_depth * sizeof(unw_word_t));
+    dest->registers = realloc(dest->registers,
+                              new_depth * sizeof(unw_word_t *));
+    for (size_t i = dest->depth; i < new_depth; ++i) {
+        dest->registers[i] = calloc(16, sizeof(unw_word_t));
+    }
+    append_record(dest, first_rec);
+    memcpy(dest->records + dest->depth, state->records,
+           state->depth * sizeof(stack_map_record_t));
+    memcpy(dest->ret_addrs + dest->depth, state->ret_addrs,
+           state->depth * sizeof(uint64_t));
+    memcpy(dest->bps + dest->depth, state->bps,
+           state->depth * sizeof(unw_word_t));
+    memcpy(dest->registers + dest->depth, state->registers,
+           state->depth * sizeof(unw_word_t*));
+    dest->depth = new_depth;
+    free(state);
 }
 
