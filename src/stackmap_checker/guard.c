@@ -11,8 +11,6 @@
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 
-// XXX Need a portable way of obtaining the name of the executable
-#define TRACE_BIN "trace"
 
 // XXX These currently need to be global, since they need to be visible to
 // jump.s
@@ -26,16 +24,15 @@ uint64_t addr = 0;
 void __guard_failure(int64_t sm_id)
 {
     fprintf(stderr, "Guard %ld failed!\n", sm_id);
-
+    // XXX Need a portable way of obtaining the name of the executable
+    char *binary_path = get_binary_path();
     unw_cursor_t cursor;
     unw_context_t context;
     unw_getcontext(&context);
     unw_init_local(&cursor, &context);
     unw_cursor_t saved_cursor = cursor;
-    int inlined = 0;
-
     // Read the stack map section.
-    void *stack_map_addr = get_addr(".llvm_stackmaps");
+    void *stack_map_addr = get_addr(binary_path, ".llvm_stackmaps");
     if (!stack_map_addr) {
         errx(1, ".llvm_stackmaps section not found. Exiting.\n");
     }
@@ -62,7 +59,7 @@ void __guard_failure(int64_t sm_id)
     call_stack_state_t *state = get_call_stack_state(cursor, context);
     collect_map_records(state, sm);
     // Get the end address of the function in which a guard failed.
-    void *end_addr = get_sym_end((void *)opt_size_rec->fun_addr, TRACE_BIN);
+    void *end_addr = get_sym_end(binary_path, (void *)opt_size_rec->fun_addr);
     uint64_t callback_ret_addr = (uint64_t) __builtin_return_address(0);
 
     // Check if the guard failed in an inlined function or not.
@@ -73,17 +70,16 @@ void __guard_failure(int64_t sm_id)
         fprintf(stderr, "A guard failed in an inlined function.\n");
         exit(1);
     }
-
     append_record(state, *opt_rec);
 
     // Restore the stack state.
     restore_unopt_stack(sm, state);
     restore_register_state(saved_cursor, state);
-
     // The address to jump to
     addr = unopt_size_rec->fun_addr + unopt_rec->instr_offset;
     stmap_free(sm);
     free_call_stack_state(state);
+    free(binary_path);
     asm volatile("jmp jmp_to_addr");
 }
 

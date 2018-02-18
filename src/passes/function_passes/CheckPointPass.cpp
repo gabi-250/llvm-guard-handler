@@ -17,7 +17,6 @@
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/IR/Dominators.h>
 
-#define TRACE_FUN_NAME "trace"
 #define GUARD_FUN_NAME "__guard_failure"
 #define UNOPT_PREFIX "__unopt_"
 
@@ -61,9 +60,10 @@ struct CheckPointPass: public FunctionPass {
   }
 
   virtual bool runOnFunction(Function &fun) {
-    StringRef funName = fun.getName();
-    outs() << "Running CheckPointPass on function: " << fun.getName() << '\n';
+    vector<BasicBlock::iterator> iterators;
     Module *mod = fun.getParent();
+    StringRef funName = fun.getName();
+    outs() << "Running CheckPointPass on function: " << funName << '\n';
     Type *i8ptr_t = PointerType::getUnqual(
         IntegerType::getInt8Ty(mod->getContext()));
     // The callback to call when a guard fails.
@@ -127,11 +127,15 @@ struct CheckPointPass: public FunctionPass {
                       std::back_inserter(args));
             auto intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_stackmap);
-
             auto call_inst = builder.CreateCall(intrinsic, args);
+            iterators.push_back(it);
           }
         }
       }
+    }
+    for (auto &it: iterators) {
+      BasicBlock *bb = (*it).getParent();
+      bb->splitBasicBlock(it);
     }
     return true;
   }

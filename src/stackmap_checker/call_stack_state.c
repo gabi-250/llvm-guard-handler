@@ -224,6 +224,7 @@ void restore_register_state(unw_cursor_t cursor, call_stack_state_t *state)
     uint32_t frame = 0;
     while (unw_step(&cursor) > 0) {
         unw_word_t off, pc;
+        unw_get_reg(&cursor, UNW_REG_IP, &pc);
         if (!pc) {
             break;
         }

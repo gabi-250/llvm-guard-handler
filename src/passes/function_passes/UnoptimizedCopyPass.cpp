@@ -7,7 +7,6 @@
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
-#define TRACE_FUN_NAME "trace"
 #define UNOPT_PREFIX "__unopt_"
 
 using namespace llvm;
@@ -46,12 +45,9 @@ struct UnoptimizedCopyPass: public FunctionPass {
   virtual bool runOnFunction(Function &fun) {
     outs() << "Running UnoptCopyPass on function: " << fun.getName() << '\n';
     auto funName = fun.getName();
-    if (funName == TRACE_FUN_NAME) {
-      // XXX To try out the code, disable inlining for all functions.
-      fun.addFnAttr(llvm::Attribute::NoInline);
-    } else if (fun.getName().startswith(UNOPT_PREFIX)) {
-      fun.addFnAttr(llvm::Attribute::NoInline);
-      fun.addFnAttr(llvm::Attribute::OptimizeNone);
+    // XXX Inlining has to be disabled for all functions.
+    fun.addFnAttr(llvm::Attribute::NoInline);
+    if (fun.getName().startswith(UNOPT_PREFIX)) {
       Module *mod = fun.getParent();
       for (auto &bb : fun) {
         for (auto &inst : bb) {
