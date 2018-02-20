@@ -16,6 +16,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
 #define GUARD_FUN_NAME "__guard_failure"
 #define UNOPT_PREFIX "__unopt_"
@@ -60,7 +61,6 @@ struct CheckPointPass: public FunctionPass {
   }
 
   virtual bool runOnFunction(Function &fun) {
-    vector<BasicBlock::iterator> iterators;
     Module *mod = fun.getParent();
     StringRef funName = fun.getName();
     outs() << "Running CheckPointPass on function: " << funName << '\n';
@@ -104,38 +104,51 @@ struct CheckPointPass: public FunctionPass {
             intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_stackmap);
           }
-          auto liveVariables = getLiveRegisters(*it);
           // Pass the live locations to the stackmap/patchpoint call. This also
           // inserts the size of each 'live' location into the stackmap.
-          std::move(liveVariables.begin(), liveVariables.end(),
-                    std::back_inserter(args));
-          auto call_inst = builder.CreateCall(intrinsic, args);
+          auto callInst = builder.CreateCall(intrinsic, args);
         } else if (isa<CallInst>(it)) {
           // Insert a stackmap call after each function call inside which a
           // guard may fail. This enables the runtime to work out the return
           // address of the function.
-          Function *calledFun = cast<CallInst>(*it).getCalledFunction();
+          CallInst &oldCallInst = cast<CallInst>(*it);
+          Function *calledFun = oldCallInst.getCalledFunction();
           if (!calledFun->hasAvailableExternallyLinkage() &&
               !calledFun->isDeclaration()) {
+
+            IRBuilder<> builder1(&bb, it);
             uint64_t PPID = getNextPatchpointID(funName);
             IRBuilder<> builder(&bb, ++it);
             auto args = vector<Value*> { builder.getInt64(PPID),
-                                         builder.getInt32(13)  // XXX shadow
+                                         builder.getInt32(13)
                                        };
-            auto liveVariables = getLiveRegisters(*it);
-            std::move(liveVariables.begin(), liveVariables.end(),
-                      std::back_inserter(args));
-            auto intrinsic = Intrinsic::getDeclaration(
-                mod, Intrinsic::experimental_stackmap);
-            auto call_inst = builder.CreateCall(intrinsic, args);
-            iterators.push_back(it);
+
+            Constant* callback = ConstantExpr::getBitCast(calledFun, i8ptr_t);
+            args.insert(args.end(),
+                        { callback,          // the callback
+                          builder.getInt32(oldCallInst.getNumArgOperands())
+                        });
+            for (unsigned i = 0; i < oldCallInst.getNumArgOperands(); ++i) {
+              args.push_back(oldCallInst.getArgOperand(i));
+            }
+            Function *intrinsic = nullptr;
+            if (calledFun->getReturnType()->isVoidTy()) {
+              intrinsic = Intrinsic::getDeclaration(
+                mod, Intrinsic::experimental_patchpoint_void);
+            } else {
+              intrinsic = Intrinsic::getDeclaration(
+                mod, Intrinsic::experimental_patchpoint_i64);
+              auto callInst = CallInst::Create(intrinsic, args);
+              auto retTy = oldCallInst.getCalledFunction()->getReturnType();
+              auto retValue = builder.CreateTruncOrBitCast(callInst, retTy);
+              if (!oldCallInst.use_empty()) {
+                oldCallInst.replaceAllUsesWith(retValue);
+              }
+              ReplaceInstWithInst(&oldCallInst, callInst);
+            }
           }
         }
       }
-    }
-    for (auto &it: iterators) {
-      BasicBlock *bb = (*it).getParent();
-      bb->splitBasicBlock(it);
     }
     return true;
   }
@@ -185,47 +198,6 @@ struct CheckPointPass: public FunctionPass {
     stackMaps[funName].push_back(nextPatchpointID);
     return nextPatchpointID;
   }
-
-  /*
-   * Return the list of registers which are live across the given instruction.
-   */
-  static vector<Value *> getLiveRegisters(Instruction &instr) {
-    vector<Value *> args;
-    Function *fun = instr.getFunction();
-    Module *mod = fun->getParent();
-    DataLayout dataLayout(mod);
-    DominatorTree DT(*fun);
-    // Iterarate over each instruction in the function.
-    for (auto &bb : *fun) {
-      IRBuilder<> builder(bb.getContext());
-      for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-        if (!(*it).use_empty() && !DT.dominates(&instr, &*it)) {
-          for (Value::use_iterator use = (*it).use_begin();
-               use != (*it).use_end(); ++use) {
-            // This instruction is defined 'above' `instr` and used 'below'
-            // `instr`, so it is live across `instr`.
-            if (DT.dominates(&instr, *use)) {
-              args.push_back(&*it);
-              auto instSize = builder.getInt64(8); // XXX default size
-              // The runtime may need to copy more than 8 bytes starting at
-              // this location. We can store the size of the object being
-              // allocated in the stack map.
-              if (isa<AllocaInst>(it)) {
-                Type *t = cast<AllocaInst>(*it).getAllocatedType();
-                instSize = builder.getInt64(
-                    dataLayout.getTypeAllocSize(t));
-              }
-              // Also insert the size of the recorded location to know how
-              // many bytes to copy at runtime.
-              args.push_back(instSize);
-            }
-          }
-        }
-      }
-    }
-    return args;
-  }
-
 };
 
 } // end anonymous namespace
