@@ -8,7 +8,7 @@ PREFIX := trace
 EXECUTABLES := $(basename $(wildcard trace*.c))
 TARGET_OBJS := $(foreach bin, $(EXECUTABLES), $(bin).o)
 
-.PHONY: all clean
+.PHONY: all clean bytecode
 
 all: $(OBJS)
 
@@ -16,7 +16,7 @@ traces: $(EXECUTABLES)
 
 .SECONDEXPANSION:
 $(EXECUTABLES): $(OBJS) $$@.o
-	$(CC) $(PASSFLAGS) -o $@ $(OBJS) $@.o -O3 -lunwind
+	$(CC) -o $@ $(OBJS) $@.o -O3 -lunwind
 
 bytecode: $(PREFIX)%.c
 	$(CC) $(PASSFLAGS) -S -emit-llvm $< -O3

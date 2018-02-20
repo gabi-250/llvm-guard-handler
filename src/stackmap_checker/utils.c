@@ -20,7 +20,6 @@ char* get_binary_path()
     return buff;
 }
 
-
 Elf64_Ehdr* get_elf_header(const char *bin_name)
 {
     int fd = open(bin_name, O_RDONLY);

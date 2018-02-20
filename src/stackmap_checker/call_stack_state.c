@@ -4,6 +4,8 @@
 #include <string.h>
 #include <err.h>
 
+#define MAX_BUF_SIZE 128
+
 call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
                                          unw_context_t context)
 {
@@ -17,15 +19,12 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
         if (!pc) {
             break;
         }
-
-        char fun_name[128];
+        char fun_name[MAX_BUF_SIZE];
         unw_get_proc_name(&cursor, fun_name, sizeof(fun_name), &off);
-
         // Stop when main is reached.
         if (!strcmp(fun_name, "main")) {
             break;
         }
-
         if (!registers[frame]) {
             // 16 registers are saved for each frame
             registers[frame] = calloc(16, sizeof(unw_word_t));
@@ -53,7 +52,6 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
         *(bps + frame) = registers[frame][UNW_X86_64_RBP];
         frame++;
     }
-
     call_stack_state_t *state = malloc(sizeof(call_stack_state_t));
     state->ret_addrs = ret_addrs;
     state->bps       = bps;
@@ -66,9 +64,6 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
 void collect_map_records(call_stack_state_t *state, stack_map_t *sm)
 {
     state->records = calloc(state->depth - 1, sizeof(stack_map_record_t));
-    // The first stack map record to be stored is the one associated with the
-    // patchpoint which triggered the guard failure.
-
     // Loop `depth - 1` times, because the return address of 'trace' should not
     // be overwritten (it should still return in main)
     for (int i = 0; i < state->depth - 1; ++i) {
@@ -89,13 +84,11 @@ void collect_map_records(call_stack_state_t *state, stack_map_t *sm)
             stmap_get_map_record(
                 sm,
                 ~sm->stk_map_records[sm_pos->stk_map_record_index].patchpoint_id);
-
         // Store each record that corresponds to a frame on the call stack.
         state->records[i] = *opt_stk_map_rec;
         free(sm_pos);
     }
 }
-
 
 void free_call_stack_state(call_stack_state_t *state)
 {
@@ -160,17 +153,13 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
 
 void restore_unopt_stack(stack_map_t *sm, call_stack_state_t *state)
 {
-    // Overwrite the old return addresses and store the stack map records that
-    // correspond to each call which generated this stack trace in
-    // `unopt_call_stk_records`.
     uint64_t *locations = NULL;
     // Get all the locations that are 'live' in the 'optimized' version of the
     // call stack. These need to be restored, so that execution can resume in
     // the 'unoptimized' version. The 'unoptimized' version only contains calls
     // to `__unopt_` functions.
     size_t num_locations = get_locations(sm, state, &locations);
-
-    // Used to index `locations`.
+    // This is used to index `locations`.
     int loc_index = 0;
     // Restore all the stacks on the call stack
     for (int frame = 0; frame < state->depth; ++frame) {
@@ -189,7 +178,6 @@ void restore_unopt_stack(stack_map_t *sm, call_stack_state_t *state)
             if (type == DIRECT) {
                 uint64_t unopt_addr = (uint64_t)state->bps[frame] +
                     unopt_rec->locations[j].offset;
-                // Place the live location at the correct stack location.
                 memcpy((void *)unopt_addr, &opt_location_value,
                         loc_size);
                 loc_index += 2;
@@ -209,13 +197,16 @@ void restore_unopt_stack(stack_map_t *sm, call_stack_state_t *state)
     free(locations);
 }
 
-void append_record(call_stack_state_t *dest, stack_map_record_t first_rec)
+void append_record(call_stack_state_t *state, stack_map_record_t first_rec)
 {
-    dest->records = realloc(dest->records,
-                            dest->depth * sizeof(stack_map_record_t));
-    memmove(dest->records + 1, dest->records,
-            (dest->depth - 1) * sizeof(stack_map_record_t));
-    dest->records[0] = first_rec;
+    // The first stack map record to be stored is the one associated with the
+    // patchpoint which triggered the guard failure (so it needs to be added
+    // separately).
+    state->records = realloc(state->records,
+                             state->depth * sizeof(stack_map_record_t));
+    memmove(state->records + 1, state->records,
+            (state->depth - 1) * sizeof(stack_map_record_t));
+    state->records[0] = first_rec;
 }
 
 void restore_register_state(unw_cursor_t cursor, call_stack_state_t *state)
@@ -230,7 +221,6 @@ void restore_register_state(unw_cursor_t cursor, call_stack_state_t *state)
         }
         char fun_name[128];
         unw_get_proc_name(&cursor, fun_name, sizeof(fun_name), &off);
-
         // Stop when main is reached.
         if (!strcmp(fun_name, "main")) {
             break;

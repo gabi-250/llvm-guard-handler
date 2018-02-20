@@ -43,11 +43,11 @@ struct UnoptimizedCopyPass: public FunctionPass {
    * Replace calls in __unopt_ functions with calls to other __unopt_ functions.
    */
   virtual bool runOnFunction(Function &fun) {
-    outs() << "Running UnoptCopyPass on function: " << fun.getName() << '\n';
     auto funName = fun.getName();
+    outs() << "Running UnoptCopyPass on function: " << funName << '\n';
     // XXX Inlining has to be disabled for all functions.
     fun.addFnAttr(llvm::Attribute::NoInline);
-    if (fun.getName().startswith(UNOPT_PREFIX)) {
+    if (funName.startswith(UNOPT_PREFIX)) {
       Module *mod = fun.getParent();
       for (auto &bb : fun) {
         for (auto &inst : bb) {

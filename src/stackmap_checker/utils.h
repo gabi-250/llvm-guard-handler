@@ -11,6 +11,9 @@ void* get_addr(const char *bin_name, const char *section_name);
  */
 void* get_sym_end(const char *bin_name, void *start_addr);
 
+/*
+ * Return the absolute path of this executable.
+ */
 char* get_binary_path();
 
 #endif // UTILS_H
