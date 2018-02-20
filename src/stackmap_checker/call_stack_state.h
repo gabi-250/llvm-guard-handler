@@ -2,8 +2,6 @@
 #define CALL_STACK_STATE_H
 
 #include "stmap.h"
-#define UNW_LOCAL_ONLY
-#include <libunwind.h>
 
 #define MAX_CALL_STACK_DEPTH 256
 

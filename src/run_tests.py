@@ -36,6 +36,7 @@ if __name__ == '__main__':
             else:
                 print(Fore.RED + 'Failed!')
                 print('Expected:\n{:}\nFound:\n{:}\n'.format(content, output))
+                print('stderr:\n{:}\n'.format(p.stderr.decode()))
                 failed.append(name)
             print(Style.RESET_ALL)
         except FileNotFoundError:

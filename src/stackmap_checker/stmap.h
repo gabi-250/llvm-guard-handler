@@ -1,7 +1,11 @@
 #ifndef STMAP_H
 #define STMAP_H
 
+#define UNW_LOCAL_ONLY
+#include <libunwind.h>
 #include <stdint.h>
+
+#define PATCHPOINT_CALL_SIZE 13
 
 /**
  * This module provides an interface to the stack map section.
@@ -109,7 +113,7 @@ stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
  * Compute the value of the specified location.
  */
 uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
-                                  uint64_t *regs, void *bp);
+                                  uint64_t *regs, void *frame_addr);
 
 /*
  * Return the stack map/size record pair which describes the return address in an
@@ -120,16 +124,15 @@ uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
 stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr);
 
 /*
- * Return the first stack map record located at an address greater than `addr`.
+ * Return the stack map record associated with the call that returns at `addr`.
  */
-stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr);
+stack_map_record_t* stmap_get_call_rec(stack_map_t *sm, uint64_t addr);
 
 /*
- * Return the last stack map record associated with the specified stack size
- * record.
+ * Exit if the specified register is not an x86-64 general purpose register.
  */
-stack_map_record_t* stmap_get_last_record(stack_map_t *sm,
-                                          stack_size_record_t target_size_rec);
+void assert_valid_reg_num(unw_regnum_t reg);
+
 void stmap_print_stack_size_records(stack_map_t *);
 void stmap_print_map_record(stack_map_t *sm, uint32_t rec_idx,
                             uint64_t *regs, void *frame_addr);

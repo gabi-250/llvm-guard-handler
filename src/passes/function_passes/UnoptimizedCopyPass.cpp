@@ -2,12 +2,14 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
 #define UNOPT_PREFIX "__unopt_"
+#define GUARD_FUN "__guard_failure"
 
 using namespace llvm;
 
@@ -56,15 +58,22 @@ struct UnoptimizedCopyPass: public FunctionPass {
             // unoptimized version of the called function.
             CallInst &call = cast<CallInst>(inst);
             Function *calledFun = call.getCalledFunction();
-            if (calledFun) {
-              StringRef calledFunName = calledFun->getName();
-              if (!calledFunName.startswith(UNOPT_PREFIX)) {
+            if (isPatchpoint(calledFun)) {
+              Value *callback = call.getArgOperand(2)->stripPointerCasts();
+              Function *callbackFunction = cast<Function>(callback);
+              StringRef calledFunName = callbackFunction->getName();
+              if (calledFunName != GUARD_FUN &&
+                  !calledFunName.startswith(UNOPT_PREFIX)) {
                 // This is not an unoptimized function -> call the unoptimized
                 // version of this function instead.
-                Function *new_fun =
+                Function *newFun =
                   mod->getFunction(UNOPT_PREFIX + calledFunName.str());
-                if (new_fun) {
-                  call.setCalledFunction(new_fun);
+                if (newFun) {
+                  Type *i8ptr_t = PointerType::getUnqual(
+                      IntegerType::getInt8Ty(mod->getContext()));
+                  Constant* newCallback =
+                    ConstantExpr::getBitCast(newFun, i8ptr_t);
+                  call.setArgOperand(2, newCallback);
                 }
               }
             }
@@ -73,6 +82,15 @@ struct UnoptimizedCopyPass: public FunctionPass {
       }
     }
     return true;
+  }
+
+  static bool isPatchpoint(Function *fun) {
+    Module *mod = fun->getParent();
+    auto patchpointIntrinsicVoid = Intrinsic::getDeclaration(
+        mod, Intrinsic::experimental_patchpoint_void);
+    auto patchpointIntrinsici64 = Intrinsic::getDeclaration(
+        mod, Intrinsic::experimental_patchpoint_i64);
+    return fun == patchpointIntrinsicVoid || fun == patchpointIntrinsici64;
   }
 };
 
