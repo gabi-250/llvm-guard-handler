@@ -42,10 +42,10 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
 void restore_unopt_stack(stack_map_t *sm, call_stack_state_t *state);
 
 /*
- * Attempts to restore the register state starting at the frame indicated by
- * the cursor, using the information in `state`.
+ * Attempts to restore the register state of the last frame, using the
+ * information in `state`.
  */
-void restore_register_state(unw_cursor_t cursor, call_stack_state_t *state);
+void restore_register_state(call_stack_state_t *state, uint64_t r[]);
 
 /*
  * Collects the stackmap record associated with each frame in `state`.

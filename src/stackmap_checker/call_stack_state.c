@@ -209,28 +209,10 @@ void append_record(call_stack_state_t *state, stack_map_record_t first_rec)
     state->records[0] = first_rec;
 }
 
-void restore_register_state(unw_cursor_t cursor, call_stack_state_t *state)
+void restore_register_state(call_stack_state_t *state, uint64_t r[])
 {
-    // Restore the register state.
-    uint32_t frame = 0;
-    while (unw_step(&cursor) > 0) {
-        unw_word_t off, pc;
-        unw_get_reg(&cursor, UNW_REG_IP, &pc);
-        if (!pc) {
-            break;
-        }
-        char fun_name[128];
-        unw_get_proc_name(&cursor, fun_name, sizeof(fun_name), &off);
-        // Stop when main is reached.
-        if (!strcmp(fun_name, "main")) {
-            break;
-        }
-        for (int i = 0; i < 16; ++i) {
-            if (i != UNW_X86_64_RSP && i != UNW_X86_64_RBP) {
-                unw_set_reg(&cursor, i, state->registers[frame][i]);
-            }
-        }
-        ++frame;
+    for (size_t i = 0; i < 16; ++i) {
+        r[i] = (uint64_t)state->registers[0][i];
     }
 }
 
