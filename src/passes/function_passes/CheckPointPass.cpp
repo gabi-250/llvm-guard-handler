@@ -61,6 +61,7 @@ struct CheckPointPass: public FunctionPass {
   }
 
   virtual bool runOnFunction(Function &fun) {
+    vector<BasicBlock::iterator> iterators;
     Module *mod = fun.getParent();
     StringRef funName = fun.getName();
     outs() << "Running CheckPointPass on function: " << funName << '\n';
@@ -115,14 +116,11 @@ struct CheckPointPass: public FunctionPass {
           Function *calledFun = oldCallInst.getCalledFunction();
           if (!calledFun->hasAvailableExternallyLinkage() &&
               !calledFun->isDeclaration()) {
-
-            IRBuilder<> builder1(&bb, it);
             uint64_t PPID = getNextPatchpointID(funName);
             IRBuilder<> builder(&bb, ++it);
             auto args = vector<Value*> { builder.getInt64(PPID),
                                          builder.getInt32(13)
                                        };
-
             Constant* callback = ConstantExpr::getBitCast(calledFun, i8ptr_t);
             args.insert(args.end(),
                         { callback,          // the callback
@@ -138,17 +136,28 @@ struct CheckPointPass: public FunctionPass {
             } else {
               intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_patchpoint_i64);
-              auto callInst = CallInst::Create(intrinsic, args);
+            }
+            auto callInst = CallInst::Create(intrinsic, args);
+            if (calledFun->getReturnType()->isVoidTy()) {
+              if (!oldCallInst.use_empty()) {
+                oldCallInst.replaceAllUsesWith(callInst);
+              }
+            } else {
               auto retTy = oldCallInst.getCalledFunction()->getReturnType();
               auto retValue = builder.CreateTruncOrBitCast(callInst, retTy);
               if (!oldCallInst.use_empty()) {
                 oldCallInst.replaceAllUsesWith(retValue);
               }
-              ReplaceInstWithInst(&oldCallInst, callInst);
             }
+            ReplaceInstWithInst(&oldCallInst, callInst);
           }
+          iterators.push_back(it);
         }
       }
+    }
+    for (auto &it: iterators) {
+      BasicBlock *bb = (*it).getParent();
+      bb->splitBasicBlock(it);
     }
     return true;
   }

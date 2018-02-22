@@ -1,9 +1,8 @@
-#include <stdlib.h>
 #include <stdio.h>
 
-int more_indirection()
+void more_indirection()
 {
-    return 3;
+    printf("Void function!\n");
 }
 
 int get_number(int level)
@@ -15,7 +14,8 @@ int get_number(int level)
     } else {
         char one = '1';
         char two = 2 + '0';
-        int x = more_indirection();
+        int x = 3;
+        more_indirection();
         putchar(one);
         putchar(two);
         putchar('\n');
@@ -32,12 +32,6 @@ void trace()
     putchar(x +'0');
     putchar('\n');
     putchar(four);
-    putchar('\n');
-
-    putchar(y % 10 + '0');
-    putchar('\n');
-
-    putchar((int)k + '0');
     putchar('\n');
 }
 

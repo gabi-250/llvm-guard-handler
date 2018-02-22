@@ -122,34 +122,12 @@ stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
     return NULL;
 }
 
-stack_map_record_t* stmap_get_last_record(stack_map_t *sm,
-                                          stack_size_record_t target_size_rec)
-{
-    stack_map_record_t* last_rec = NULL;
-    uint64_t max_addr = 0;
-    for (size_t i = 0; i < sm->num_rec; ++i) {
-        stack_map_record_t rec = sm->stk_map_records[i];
-        stack_size_record_t *size_rec = stmap_get_size_record(sm, i);
-        if (!size_rec) {
-            return NULL;
-        }
-        if (size_rec->index != target_size_rec.index) {
-            continue;
-        }
-        uint64_t addr = size_rec->fun_addr + rec.instr_offset;
-        if (addr > max_addr) {
-            max_addr = addr;
-            last_rec = &sm->stk_map_records[i];
-        }
-    }
-    return last_rec;
-}
-
 stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr)
 {
     stack_map_record_t* call_rec =
-        stmap_first_rec_after_addr(sm, return_addr);
+        stmap_get_call_rec(sm, return_addr);
     if (!call_rec) {
+        // XXX 13
         errx(1, "Call record not found. Exiting.\n");
     }
     stack_map_record_t *unopt_call_rec =
@@ -178,22 +156,19 @@ void stmap_print_stack_size_records(stack_map_t *sm)
     }
 }
 
-stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
+stack_map_record_t* stmap_get_call_rec(stack_map_t *sm, uint64_t addr)
 {
+    uint64_t stmap_addr = addr - 13;
     for (size_t i = 0; i < sm->num_rec; ++i) {
         stack_map_record_t rec = sm->stk_map_records[i];
         stack_size_record_t *size_rec = stmap_get_size_record(sm, i);
         if (!size_rec) {
             errx(1, "No stack map after call!. Exiting.\n");
         }
-        stack_map_record_t *last_rec =
-            stmap_get_last_record(sm, *size_rec);
-        uint64_t last_addr = size_rec->fun_addr + last_rec->instr_offset;
-        if (addr > last_addr) {
+        if (stmap_addr < size_rec->fun_addr) {
             continue;
         }
-        if (size_rec->fun_addr + rec.instr_offset >= addr
-            && addr > size_rec->fun_addr) {
+        if (stmap_addr == size_rec->fun_addr + rec.instr_offset) {
             return &sm->stk_map_records[i];
         }
     }

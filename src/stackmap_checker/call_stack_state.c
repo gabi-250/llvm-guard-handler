@@ -74,9 +74,10 @@ void collect_map_records(call_stack_state_t *state, stack_map_t *sm)
         // function.
         stack_map_pos_t *sm_pos =
             stmap_get_unopt_return_addr(sm, *(uint64_t *)state->ret_addrs[i]);
+        // XXX 13
         uint64_t unopt_ret_addr =
             sm->stk_size_records[sm_pos->stk_size_record_index].fun_addr +
-            sm->stk_map_records[sm_pos->stk_map_record_index].instr_offset;
+            sm->stk_map_records[sm_pos->stk_map_record_index].instr_offset + 13;
         // Overwrite the old return addresses
         *(uint64_t *)state->ret_addrs[i] = unopt_ret_addr;
         // The stack map record associated with this frame.
