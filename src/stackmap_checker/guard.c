@@ -75,7 +75,6 @@ void __guard_failure(int64_t sm_id)
 
     // Restore the stack state.
     restore_unopt_stack(sm, state);
-    // XXX does not seem to be working
     restore_register_state(state, r);
     // The address to jump to
     addr = unopt_size_rec->fun_addr + unopt_rec->instr_offset;

@@ -138,13 +138,21 @@ struct CheckPointPass: public FunctionPass {
                 mod, Intrinsic::experimental_patchpoint_i64);
             }
             auto callInst = CallInst::Create(intrinsic, args);
-            if (calledFun->getReturnType()->isVoidTy()) {
+            auto calledFunRetTy = calledFun->getReturnType();
+            if (calledFunRetTy->isVoidTy()) {
               if (!oldCallInst.use_empty()) {
                 oldCallInst.replaceAllUsesWith(callInst);
               }
             } else {
               auto retTy = oldCallInst.getCalledFunction()->getReturnType();
-              auto retValue = builder.CreateTruncOrBitCast(callInst, retTy);
+              Value *retValue = nullptr;
+              if (calledFunRetTy->isIntegerTy()) {
+                retValue = builder.CreateTruncOrBitCast(callInst, retTy);
+              } else {
+                auto floatPtrTy = PointerType::getUnqual(retTy);
+                retValue = builder.CreateIntToPtr(callInst, floatPtrTy);
+                retValue = builder.CreateLoad(retValue, retTy);
+              }
               if (!oldCallInst.use_empty()) {
                 oldCallInst.replaceAllUsesWith(retValue);
               }
