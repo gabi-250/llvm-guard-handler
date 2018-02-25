@@ -94,7 +94,7 @@ struct CheckPointPass: public FunctionPass {
             // callback, and the arguments to pass to the callback.
             args.insert(args.end(),
                         { guardHandler,          // the callback
-                          builder.getInt32(1),   // the callback has one argument
+                          builder.getInt32(1),   // the callback has 1 argument
                           builder.getInt64(PPID) // the argument
                         });
             intrinsic = Intrinsic::getDeclaration(
@@ -107,24 +107,28 @@ struct CheckPointPass: public FunctionPass {
           }
           auto callInst = builder.CreateCall(intrinsic, args);
         } else if (isa<CallInst>(it)) {
-          // Insert a stackmap call after each function call inside which a
-          // guard may fail. This enables the runtime to work out the return
-          // address of the function.
           CallInst &oldCallInst = cast<CallInst>(*it);
-
           Function *calledFun = oldCallInst.getCalledFunction();
           if (!oldCallInst.isInlineAsm() &&
               !calledFun->hasAvailableExternallyLinkage() &&
               !calledFun->isDeclaration()) {
+            // This is a function call. A guard might fail inside the called
+            // function, so its return address must be recorded.
             uint64_t PPID = getNextPatchpointID(funName);
             IRBuilder<> builder(&bb, ++it);
             auto args = vector<Value*> { builder.getInt64(PPID),
                                          builder.getInt32(13)
                                        };
             if (funName.startswith(UNOPT_PREFIX)) {
+              // The current function is an unoptimized one, so we must replace
+              // all calls inside it with patchpoint calls. The originally
+              // called functions will be passed as callbacks to the patchpoint
+              // calls. This enables the runtime to accurately identify the
+              // return addresses of the calls.
               if (!calledFun->getName().startswith(UNOPT_PREFIX)) {
                 calledFun = mod->getFunction(getTwinName(calledFun->getName()));
               }
+              // The callback to pass to the patchpoint call.
               Constant* callback = ConstantExpr::getBitCast(calledFun, i8ptr_t);
               args.insert(args.end(),
                           { callback,          // the callback
@@ -133,6 +137,8 @@ struct CheckPointPass: public FunctionPass {
               for (unsigned i = 0; i < oldCallInst.getNumArgOperands(); ++i) {
                 args.push_back(oldCallInst.getArgOperand(i));
               }
+              // Find the correct `llvm.experimental.patchpoint.*` to call,
+              // according to the return value of the called function.
               Function *intrinsic = nullptr;
               if (calledFun->getReturnType()->isVoidTy()) {
                 intrinsic = Intrinsic::getDeclaration(
@@ -141,7 +147,10 @@ struct CheckPointPass: public FunctionPass {
                 intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_patchpoint_i64);
               }
+              // Recreate this call instruction as a patchpoint call.
               auto callInst = CallInst::Create(intrinsic, args);
+              // Replace the uses of this call instruction with the newly
+              // created patchpoint call.
               auto calledFunRetTy = calledFun->getReturnType();
               if (calledFunRetTy->isVoidTy()) {
                 if (!oldCallInst.use_empty()) {
@@ -163,6 +172,11 @@ struct CheckPointPass: public FunctionPass {
               }
               ReplaceInstWithInst(&oldCallInst, callInst);
             } else {
+              // The function is not an __unopt_ function. Insert a  stackmap
+              // call after the current call instruction to record the return
+              // address of the call. Patchpoint callbacks are never inlined,
+              // which is why we must use `stackmap` calls in the optimized
+              // versions of the functions.
               auto intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_stackmap);
               auto call_inst = builder.CreateCall(intrinsic, args);

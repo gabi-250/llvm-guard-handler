@@ -16,6 +16,7 @@
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include "Utils/Utils.h"
 
 #define UNOPT_PREFIX "__unopt_"
 
@@ -46,7 +47,7 @@ struct LiveVariablesPass: public FunctionPass {
           if (callInst.isInlineAsm()) {
             continue;
           }
-          if (producesStackmapRecords(calledFun)) {
+          if (getPatchpointType(calledFun).producesStackmapRecords()) {
             // This is a stackmap/patchpoint call, so it needs to record all
             // the variables live at this point.
             auto liveVariables = getLiveRegisters(*it);
@@ -68,21 +69,6 @@ struct LiveVariablesPass: public FunctionPass {
     return true;
   }
 
-  /*
-   * Check if `fun` is `llvm.experimental.stackmap` or
-   * `llvm.experimental.patchpoint.*`.
-   */
-  static bool producesStackmapRecords(Function *fun) {
-    Module *mod = fun->getParent();
-    auto stackmapIntrinsic = Intrinsic::getDeclaration(
-        mod, Intrinsic::experimental_stackmap);
-    auto patchpointIntrinsicVoid = Intrinsic::getDeclaration(
-        mod, Intrinsic::experimental_patchpoint_void);
-    auto patchpointIntrinsici64 = Intrinsic::getDeclaration(
-        mod, Intrinsic::experimental_patchpoint_i64);
-    return fun == stackmapIntrinsic || fun == patchpointIntrinsicVoid
-        || fun == patchpointIntrinsici64;
-  }
 
   /*
    * Return the list of registers which are live across the given instruction.

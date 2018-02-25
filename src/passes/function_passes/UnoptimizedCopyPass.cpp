@@ -7,6 +7,7 @@
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include "Utils/Utils.h"
 
 #define UNOPT_PREFIX "__unopt_"
 #define GUARD_FUN "__guard_failure"
@@ -61,7 +62,7 @@ struct UnoptimizedCopyPass: public FunctionPass {
               continue;
             }
             Function *calledFun = call.getCalledFunction();
-            if (isPatchpoint(calledFun)) {
+            if (getPatchpointType(calledFun).isPatchpoint()) {
               Value *callback = call.getArgOperand(2)->stripPointerCasts();
               Function *callbackFunction = cast<Function>(callback);
               StringRef calledFunName = callbackFunction->getName();
@@ -85,15 +86,6 @@ struct UnoptimizedCopyPass: public FunctionPass {
       }
     }
     return true;
-  }
-
-  static bool isPatchpoint(Function *fun) {
-    Module *mod = fun->getParent();
-    auto patchpointIntrinsicVoid = Intrinsic::getDeclaration(
-        mod, Intrinsic::experimental_patchpoint_void);
-    auto patchpointIntrinsici64 = Intrinsic::getDeclaration(
-        mod, Intrinsic::experimental_patchpoint_i64);
-    return fun == patchpointIntrinsicVoid || fun == patchpointIntrinsici64;
   }
 };
 

@@ -153,8 +153,8 @@ stack_map_record_t* stmap_get_last_record(stack_map_t *sm,
     return last_rec;
 }
 
- stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr)
- {
+stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_addr)
+{
     stack_map_record_t* call_rec =
         stmap_first_rec_after_addr(sm, return_addr);
     if (!call_rec) {
@@ -198,8 +198,8 @@ stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
             stmap_get_last_record(sm, *size_rec);
         uint64_t last_addr = size_rec->fun_addr + last_rec->instr_offset;
         if (addr > last_addr) {
-             continue;
-         }
+            continue;
+        }
         if (size_rec->fun_addr + rec.instr_offset >= addr
             && addr > size_rec->fun_addr) {
              return &sm->stk_map_records[i];
