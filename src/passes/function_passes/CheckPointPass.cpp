@@ -105,8 +105,6 @@ struct CheckPointPass: public FunctionPass {
             intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_stackmap);
           }
-          // Pass the live locations to the stackmap/patchpoint call. This also
-          // inserts the size of each 'live' location into the stackmap.
           auto callInst = builder.CreateCall(intrinsic, args);
         } else if (isa<CallInst>(it)) {
           // Insert a stackmap call after each function call inside which a

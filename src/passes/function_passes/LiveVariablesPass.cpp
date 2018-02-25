@@ -24,6 +24,11 @@ using std::vector;
 
 namespace {
 
+/*
+ * Searches for each call to `llvm.experimental.stackmap` or
+ * `llvm.experimental.patchpoint` and passes the variables which are live at
+ * the callsite as arguments to the call.
+ */
 struct LiveVariablesPass: public FunctionPass {
   static char id;
 
@@ -33,38 +38,47 @@ struct LiveVariablesPass: public FunctionPass {
     Module *mod = fun.getParent();
     StringRef funName = fun.getName();
     outs() << "Running LiveVariablesPass on function: " << funName << '\n';
+    for (auto &bb : fun) {
+      for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
+        if (isa<CallInst>(it)) {
+          CallInst &callInst = cast<CallInst>(*it);
+          Function *calledFun = callInst.getCalledFunction();
+          if (producesStackmapRecords(calledFun)) {
+            // This is a stackmap/patchpoint call, so it needs to record all
+            // the variables live at this point.
+            auto liveVariables = getLiveRegisters(*it);
+            vector<Value *> args(callInst.arg_begin(), callInst.arg_end());
+            // Pass the live locations to the stackmap/patchpoint call. This
+            // also inserts the size of each 'live' location into the stackmap.
+            std::move(liveVariables.begin(), liveVariables.end(),
+                      std::back_inserter(args));
+            CallInst *newCall = CallInst::Create(calledFun, args);
+            if (!callInst.use_empty()) {
+              callInst.replaceAllUsesWith(newCall);
+            }
+            ReplaceInstWithInst(callInst.getParent()->getInstList(),
+                                it, newCall);
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  /*
+   * Check if `fun` is `llvm.experimental.stackmap` or
+   * `llvm.experimental.patchpoint.*`.
+   */
+  static bool producesStackmapRecords(Function *fun) {
+    Module *mod = fun->getParent();
     auto stackmapIntrinsic = Intrinsic::getDeclaration(
         mod, Intrinsic::experimental_stackmap);
     auto patchpointIntrinsicVoid = Intrinsic::getDeclaration(
         mod, Intrinsic::experimental_patchpoint_void);
     auto patchpointIntrinsici64 = Intrinsic::getDeclaration(
         mod, Intrinsic::experimental_patchpoint_i64);
-    for (auto &bb : fun) {
-      for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-          if (isa<CallInst>(it)) {
-            // Insert a stackmap call after each function call inside which a
-            // guard may fail. This enables the runtime to work out the return
-            // address of the function.
-            CallInst &callInst = cast<CallInst>(*it);
-            Function *calledFun = callInst.getCalledFunction();
-            if (calledFun == stackmapIntrinsic
-                || calledFun == patchpointIntrinsicVoid
-                || calledFun == patchpointIntrinsici64) {
-              auto liveVariables = getLiveRegisters(*it);
-              vector<Value *> args(callInst.arg_begin(), callInst.arg_end());
-              std::move(liveVariables.begin(), liveVariables.end(),
-                        std::back_inserter(args));
-              CallInst *newCall = CallInst::Create(calledFun, args);
-              if (!callInst.use_empty()) {
-                callInst.replaceAllUsesWith(newCall);
-              }
-              ReplaceInstWithInst(callInst.getParent()->getInstList(),
-                                  it, newCall);
-            }
-        }
-      }
-    }
-    return true;
+    return fun == stackmapIntrinsic || fun== patchpointIntrinsicVoid
+        || fun == patchpointIntrinsici64;
   }
 
   /*
