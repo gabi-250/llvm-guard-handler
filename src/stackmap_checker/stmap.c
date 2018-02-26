@@ -78,37 +78,32 @@ void assert_valid_reg_num(unw_regnum_t reg)
     }
 }
 
-uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
-        uint64_t *regs, void *frame_addr)
+void stmap_get_location_value(stack_map_t *sm, location_t loc,
+        uint64_t *regs, void *frame_addr, void **loc_value, uint64_t loc_size)
 {
-    uint64_t *dest_addr;
-    uint64_t addr, value;
+    uint64_t addr = 0;
+    *loc_value = malloc(loc_size);
     switch (loc.kind) {
         case REGISTER:
             assert_valid_reg_num(loc.dwarf_reg_num);
-            return regs[loc.dwarf_reg_num];
+            memcpy(*loc_value, &regs[loc.dwarf_reg_num], loc_size);
+            break;
         case DIRECT:
-            dest_addr = (uint64_t *)malloc(sizeof(uint64_t));
             addr = (uint64_t)frame_addr + loc.offset;
-            memcpy(dest_addr, (void *)addr, loc.size);
-            value = *dest_addr;
-            free(dest_addr);
-            return value;
+            memcpy(*loc_value, (void *)addr, loc_size);
+            break;
         case INDIRECT:
-            dest_addr = (uint64_t *)malloc(sizeof(uint64_t));
-            addr = (uint64_t)frame_addr + loc.offset;
-            memcpy(dest_addr, (void *)*(uint64_t *)addr, loc.size);
-            value = *dest_addr;
-            free(dest_addr);
-            return value;
+            errx(1, "Not implemented.");
+            break;
         case CONST_INDEX:
-            return sm->constants[loc.offset];
+            memcpy(*loc_value, &sm->constants[loc.offset], loc_size);
+            break;
         case CONSTANT:
-            return loc.offset;
+            memcpy(*loc_value, &loc.offset, loc_size);
+            break;
         default:
             errx(1, "Unknown location - %u.\nExiting.\n", loc.kind);
     }
-    return 0;
 }
 
 stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
@@ -206,34 +201,6 @@ stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
         }
     }
     return NULL;
-}
-
-void stmap_print_map_record(stack_map_t *sm, uint32_t rec_idx,
-        uint64_t *regs, void *frame_addr) {
-    stack_map_record_t rec = sm->stk_map_records[rec_idx];
-    for (size_t i = 0; i < rec.num_locations; ++i) {
-        location_type type = rec.locations[i].kind;
-        uint64_t loc_value = stmap_get_location_value(sm, rec.locations[i],
-                                                      regs, frame_addr);
-        if (type == REGISTER) {
-            uint16_t reg_num = rec.locations[i].dwarf_reg_num;
-            assert_valid_reg_num(reg_num);
-            printf("\t[REGISTER %hu] Loc %zu, value is %lu\n", reg_num, i,
-                   loc_value);
-        } else if (type == DIRECT) {
-            uint64_t addr = (uint64_t)frame_addr + rec.locations[i].offset;
-            printf("\t[DIRECT] Loc value is %lu @ %p\n", loc_value,
-                   (void *)addr);
-        } else if (type == INDIRECT) {
-            uint64_t addr = (uint64_t)frame_addr + rec.locations[i].offset;
-            printf("\t[INDIRECT] Loc %zu @ [%p]\n", i, (void *)addr);
-        } else if (type == CONSTANT) {
-            printf("\t[CONSTANT] Loc %zu, value is %lu\n", i, loc_value);
-        } else if (type == CONST_INDEX) {
-            printf("\t[CONSTANT INDEX] Loc %zu, value is %lu\n", i,
-                   loc_value);
-        }
-    }
 }
 
 void stmap_print_liveouts(stack_map_t *stack_map, uint64_t *regs)

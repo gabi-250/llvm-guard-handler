@@ -112,8 +112,9 @@ stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
 /*
  * Compute the value of the specified location.
  */
-uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
-                                  uint64_t *regs, void *frame_addr);
+void stmap_get_location_value(stack_map_t *sm, location_t loc,
+                              uint64_t *regs, void *frame_addr,
+                              void **loc_value, uint64_t loc_size);
 
 /*
  * Return the stack map/size record pair which describes the return address in an
@@ -140,8 +141,6 @@ void assert_valid_reg_num(unw_regnum_t reg);
 stack_map_record_t* stmap_get_last_record(stack_map_t *sm,
                                           stack_size_record_t target_size_rec);
 void stmap_print_stack_size_records(stack_map_t *);
-void stmap_print_map_record(stack_map_t *sm, uint32_t rec_idx,
-                            uint64_t *regs, void *frame_addr);
 void stmap_print_liveouts(stack_map_t *rec, uint64_t *regs);
 
 #endif // STMAP_H
