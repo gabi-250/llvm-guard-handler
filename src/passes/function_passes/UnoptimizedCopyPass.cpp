@@ -57,6 +57,9 @@ struct UnoptimizedCopyPass: public FunctionPass {
             // Replace each call in this function with a call to the
             // unoptimized version of the called function.
             CallInst &call = cast<CallInst>(inst);
+            if (call.isInlineAsm()) {
+              continue;
+            }
             Function *calledFun = call.getCalledFunction();
             if (isPatchpoint(calledFun)) {
               Value *callback = call.getArgOperand(2)->stripPointerCasts();
