@@ -111,53 +111,64 @@ struct CheckPointPass: public FunctionPass {
           // guard may fail. This enables the runtime to work out the return
           // address of the function.
           CallInst &oldCallInst = cast<CallInst>(*it);
+
           Function *calledFun = oldCallInst.getCalledFunction();
-          if (!calledFun->hasAvailableExternallyLinkage() &&
+          if (!oldCallInst.isInlineAsm() &&
+              !calledFun->hasAvailableExternallyLinkage() &&
               !calledFun->isDeclaration()) {
             uint64_t PPID = getNextPatchpointID(funName);
             IRBuilder<> builder(&bb, ++it);
             auto args = vector<Value*> { builder.getInt64(PPID),
                                          builder.getInt32(13)
                                        };
-            Constant* callback = ConstantExpr::getBitCast(calledFun, i8ptr_t);
-            args.insert(args.end(),
-                        { callback,          // the callback
-                          builder.getInt32(oldCallInst.getNumArgOperands())
-                        });
-            for (unsigned i = 0; i < oldCallInst.getNumArgOperands(); ++i) {
-              args.push_back(oldCallInst.getArgOperand(i));
-            }
-            Function *intrinsic = nullptr;
-            if (calledFun->getReturnType()->isVoidTy()) {
-              intrinsic = Intrinsic::getDeclaration(
-                mod, Intrinsic::experimental_patchpoint_void);
-            } else {
-              intrinsic = Intrinsic::getDeclaration(
-                mod, Intrinsic::experimental_patchpoint_i64);
-            }
-            auto callInst = CallInst::Create(intrinsic, args);
-            auto calledFunRetTy = calledFun->getReturnType();
-            if (calledFunRetTy->isVoidTy()) {
-              if (!oldCallInst.use_empty()) {
-                oldCallInst.replaceAllUsesWith(callInst);
+            if (funName.startswith(UNOPT_PREFIX)) {
+              if (!calledFun->getName().startswith(UNOPT_PREFIX)) {
+                calledFun = mod->getFunction(getTwinName(calledFun->getName()));
               }
-            } else {
-              auto retTy = oldCallInst.getCalledFunction()->getReturnType();
-              Value *retValue = nullptr;
-              if (calledFunRetTy->isIntegerTy()) {
-                retValue = builder.CreateTruncOrBitCast(callInst, retTy);
+              Constant* callback = ConstantExpr::getBitCast(calledFun, i8ptr_t);
+              args.insert(args.end(),
+                          { callback,          // the callback
+                            builder.getInt32(oldCallInst.getNumArgOperands())
+                          });
+              for (unsigned i = 0; i < oldCallInst.getNumArgOperands(); ++i) {
+                args.push_back(oldCallInst.getArgOperand(i));
+              }
+              Function *intrinsic = nullptr;
+              if (calledFun->getReturnType()->isVoidTy()) {
+                intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_patchpoint_void);
               } else {
-                auto floatPtrTy = PointerType::getUnqual(retTy);
-                retValue = builder.CreateIntToPtr(callInst, floatPtrTy);
-                retValue = builder.CreateLoad(retValue, retTy);
+                intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_patchpoint_i64);
               }
-              if (!oldCallInst.use_empty()) {
-                oldCallInst.replaceAllUsesWith(retValue);
+              auto callInst = CallInst::Create(intrinsic, args);
+              auto calledFunRetTy = calledFun->getReturnType();
+              if (calledFunRetTy->isVoidTy()) {
+                if (!oldCallInst.use_empty()) {
+                  oldCallInst.replaceAllUsesWith(callInst);
+                }
+              } else {
+                auto retTy = oldCallInst.getCalledFunction()->getReturnType();
+                Value *retValue = nullptr;
+                if (calledFunRetTy->isIntegerTy()) {
+                  retValue = builder.CreateTruncOrBitCast(callInst, retTy);
+                } else {
+                  auto floatPtrTy = PointerType::getUnqual(retTy);
+                  retValue = builder.CreateIntToPtr(callInst, floatPtrTy);
+                  retValue = builder.CreateLoad(retValue, retTy);
+                }
+                if (!oldCallInst.use_empty()) {
+                  oldCallInst.replaceAllUsesWith(retValue);
+                }
               }
+              ReplaceInstWithInst(&oldCallInst, callInst);
+            } else {
+              auto intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_stackmap);
+              auto call_inst = builder.CreateCall(intrinsic, args);
             }
-            ReplaceInstWithInst(&oldCallInst, callInst);
+            iterators.push_back(it);
           }
-          iterators.push_back(it);
         }
       }
     }

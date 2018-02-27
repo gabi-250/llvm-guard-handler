@@ -43,6 +43,9 @@ struct LiveVariablesPass: public FunctionPass {
         if (isa<CallInst>(it)) {
           CallInst &callInst = cast<CallInst>(*it);
           Function *calledFun = callInst.getCalledFunction();
+          if (callInst.isInlineAsm()) {
+            continue;
+          }
           if (producesStackmapRecords(calledFun)) {
             // This is a stackmap/patchpoint call, so it needs to record all
             // the variables live at this point.
@@ -77,7 +80,7 @@ struct LiveVariablesPass: public FunctionPass {
         mod, Intrinsic::experimental_patchpoint_void);
     auto patchpointIntrinsici64 = Intrinsic::getDeclaration(
         mod, Intrinsic::experimental_patchpoint_i64);
-    return fun == stackmapIntrinsic || fun== patchpointIntrinsicVoid
+    return fun == stackmapIntrinsic || fun == patchpointIntrinsicVoid
         || fun == patchpointIntrinsici64;
   }
 
