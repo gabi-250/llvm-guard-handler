@@ -71,6 +71,13 @@ stack_map_record_t* stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id
     return NULL;
 }
 
+void assert_valid_reg_num(unw_regnum_t reg)
+{
+    if (reg < UNW_X86_64_RAX || reg > UNW_X86_64_R15) {
+        errx(1, "Invalid register number %d", reg);
+    }
+}
+
 uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
         uint64_t *regs, void *frame_addr)
 {
@@ -78,6 +85,7 @@ uint64_t stmap_get_location_value(stack_map_t *sm, location_t loc,
     uint64_t addr, value;
     switch (loc.kind) {
         case REGISTER:
+            assert_valid_reg_num(loc.dwarf_reg_num);
             return regs[loc.dwarf_reg_num];
         case DIRECT:
             dest_addr = (uint64_t *)malloc(sizeof(uint64_t));
@@ -194,7 +202,7 @@ stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
         }
         if (size_rec->fun_addr + rec.instr_offset >= addr
             && addr > size_rec->fun_addr) {
-            return &sm->stk_map_records[i];
+             return &sm->stk_map_records[i];
         }
     }
     return NULL;
@@ -209,6 +217,7 @@ void stmap_print_map_record(stack_map_t *sm, uint32_t rec_idx,
                                                       regs, frame_addr);
         if (type == REGISTER) {
             uint16_t reg_num = rec.locations[i].dwarf_reg_num;
+            assert_valid_reg_num(reg_num);
             printf("\t[REGISTER %hu] Loc %zu, value is %lu\n", reg_num, i,
                    loc_value);
         } else if (type == DIRECT) {
@@ -237,6 +246,7 @@ void stmap_print_liveouts(stack_map_t *stack_map, uint64_t *regs)
         for (size_t j = 0; j < rec.num_liveouts; ++j) {
             liveout_t liveout = rec.liveouts[j];
             uint16_t reg_num = liveout.dwarf_reg_num;
+            assert_valid_reg_num(reg_num);
             printf("\t[REGISTER %hu] Liveout %zu, value is %p\n", reg_num, j,
                    (void *)regs[reg_num]);
         }

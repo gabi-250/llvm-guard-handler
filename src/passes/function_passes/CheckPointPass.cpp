@@ -16,6 +16,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/IR/Dominators.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
 #define GUARD_FUN_NAME "__guard_failure"
 #define UNOPT_PREFIX "__unopt_"
@@ -93,7 +94,7 @@ struct CheckPointPass: public FunctionPass {
             // callback, and the arguments to pass to the callback.
             args.insert(args.end(),
                         { guardHandler,          // the callback
-                          builder.getInt32(1),   // the callback has one argument
+                          builder.getInt32(1),   // the callback has 1 argument
                           builder.getInt64(PPID) // the argument
                         });
             intrinsic = Intrinsic::getDeclaration(
@@ -104,30 +105,82 @@ struct CheckPointPass: public FunctionPass {
             intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_stackmap);
           }
-          auto liveVariables = getLiveRegisters(*it);
-          // Pass the live locations to the stackmap/patchpoint call. This also
-          // inserts the size of each 'live' location into the stackmap.
-          std::move(liveVariables.begin(), liveVariables.end(),
-                    std::back_inserter(args));
-          auto call_inst = builder.CreateCall(intrinsic, args);
+          auto callInst = builder.CreateCall(intrinsic, args);
         } else if (isa<CallInst>(it)) {
-          // Insert a stackmap call after each function call inside which a
-          // guard may fail. This enables the runtime to work out the return
-          // address of the function.
-          Function *calledFun = cast<CallInst>(*it).getCalledFunction();
-          if (!calledFun->hasAvailableExternallyLinkage() &&
+          CallInst &oldCallInst = cast<CallInst>(*it);
+          Function *calledFun = oldCallInst.getCalledFunction();
+          if (!oldCallInst.isInlineAsm() &&
+              !calledFun->hasAvailableExternallyLinkage() &&
               !calledFun->isDeclaration()) {
+            // This is a function call. A guard might fail inside the called
+            // function, so its return address must be recorded.
             uint64_t PPID = getNextPatchpointID(funName);
             IRBuilder<> builder(&bb, ++it);
             auto args = vector<Value*> { builder.getInt64(PPID),
-                                         builder.getInt32(13)  // XXX shadow
+                                         builder.getInt32(13)
                                        };
-            auto liveVariables = getLiveRegisters(*it);
-            std::move(liveVariables.begin(), liveVariables.end(),
-                      std::back_inserter(args));
-            auto intrinsic = Intrinsic::getDeclaration(
-                mod, Intrinsic::experimental_stackmap);
-            auto call_inst = builder.CreateCall(intrinsic, args);
+            if (funName.startswith(UNOPT_PREFIX)) {
+              // The current function is an unoptimized one, so we must replace
+              // all calls inside it with patchpoint calls. The originally
+              // called functions will be passed as callbacks to the patchpoint
+              // calls. This enables the runtime to accurately identify the
+              // return addresses of the calls.
+              if (!calledFun->getName().startswith(UNOPT_PREFIX)) {
+                calledFun = mod->getFunction(getTwinName(calledFun->getName()));
+              }
+              // The callback to pass to the patchpoint call.
+              Constant* callback = ConstantExpr::getBitCast(calledFun, i8ptr_t);
+              args.insert(args.end(),
+                          { callback,          // the callback
+                            builder.getInt32(oldCallInst.getNumArgOperands())
+                          });
+              for (unsigned i = 0; i < oldCallInst.getNumArgOperands(); ++i) {
+                args.push_back(oldCallInst.getArgOperand(i));
+              }
+              // Find the correct `llvm.experimental.patchpoint.*` to call,
+              // according to the return value of the called function.
+              Function *intrinsic = nullptr;
+              if (calledFun->getReturnType()->isVoidTy()) {
+                intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_patchpoint_void);
+              } else {
+                intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_patchpoint_i64);
+              }
+              // Recreate this call instruction as a patchpoint call.
+              auto callInst = CallInst::Create(intrinsic, args);
+              // Replace the uses of this call instruction with the newly
+              // created patchpoint call.
+              auto calledFunRetTy = calledFun->getReturnType();
+              if (calledFunRetTy->isVoidTy()) {
+                if (!oldCallInst.use_empty()) {
+                  oldCallInst.replaceAllUsesWith(callInst);
+                }
+              } else {
+                auto retTy = oldCallInst.getCalledFunction()->getReturnType();
+                Value *retValue = nullptr;
+                if (calledFunRetTy->isIntegerTy()) {
+                  retValue = builder.CreateTruncOrBitCast(callInst, retTy);
+                } else {
+                  auto floatPtrTy = PointerType::getUnqual(retTy);
+                  retValue = builder.CreateIntToPtr(callInst, floatPtrTy);
+                  retValue = builder.CreateLoad(retValue, retTy);
+                }
+                if (!oldCallInst.use_empty()) {
+                  oldCallInst.replaceAllUsesWith(retValue);
+                }
+              }
+              ReplaceInstWithInst(&oldCallInst, callInst);
+            } else {
+              // The function is not an __unopt_ function. Insert a  stackmap
+              // call after the current call instruction to record the return
+              // address of the call. Patchpoint callbacks are never inlined,
+              // which is why we must use `stackmap` calls in the optimized
+              // versions of the functions.
+              auto intrinsic = Intrinsic::getDeclaration(
+                  mod, Intrinsic::experimental_stackmap);
+              auto call_inst = builder.CreateCall(intrinsic, args);
+            }
             iterators.push_back(it);
           }
         }
@@ -185,47 +238,6 @@ struct CheckPointPass: public FunctionPass {
     stackMaps[funName].push_back(nextPatchpointID);
     return nextPatchpointID;
   }
-
-  /*
-   * Return the list of registers which are live across the given instruction.
-   */
-  static vector<Value *> getLiveRegisters(Instruction &instr) {
-    vector<Value *> args;
-    Function *fun = instr.getFunction();
-    Module *mod = fun->getParent();
-    DataLayout dataLayout(mod);
-    DominatorTree DT(*fun);
-    // Iterarate over each instruction in the function.
-    for (auto &bb : *fun) {
-      IRBuilder<> builder(bb.getContext());
-      for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
-        if (!(*it).use_empty() && !DT.dominates(&instr, &*it)) {
-          for (Value::use_iterator use = (*it).use_begin();
-               use != (*it).use_end(); ++use) {
-            // This instruction is defined 'above' `instr` and used 'below'
-            // `instr`, so it is live across `instr`.
-            if (DT.dominates(&instr, *use)) {
-              args.push_back(&*it);
-              auto instSize = builder.getInt64(8); // XXX default size
-              // The runtime may need to copy more than 8 bytes starting at
-              // this location. We can store the size of the object being
-              // allocated in the stack map.
-              if (isa<AllocaInst>(it)) {
-                Type *t = cast<AllocaInst>(*it).getAllocatedType();
-                instSize = builder.getInt64(
-                    dataLayout.getTypeAllocSize(t));
-              }
-              // Also insert the size of the recorded location to know how
-              // many bytes to copy at runtime.
-              args.push_back(instSize);
-            }
-          }
-        }
-      }
-    }
-    return args;
-  }
-
 };
 
 } // end anonymous namespace

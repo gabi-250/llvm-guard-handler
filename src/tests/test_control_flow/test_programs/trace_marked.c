@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <stdio.h>
 
 int more_indirection()
@@ -10,7 +9,7 @@ int get_number(int level)
 {
     if (level < 2) {
         int x = get_number(level + 1);
-        printf("%d\n", x % 10);
+        printf("%d\n", x);
         return more_indirection();
     } else {
         return 2;
