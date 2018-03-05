@@ -3,20 +3,26 @@
 
 #include "stmap.h"
 
-#define MAX_CALL_STACK_DEPTH 256
+typedef struct Frame {
+    // The address of the return address of the frame.
+    uint64_t ret_addr;
+    // The base pointer.
+    unw_word_t bp;
+    // The 16 registers recorded for each frame.
+    unw_word_t *registers;
+    // The stack map record which correspond to this call.
+    stack_map_record_t record;
+    uint64_t size;
+} frame_t;
 
 // The state of the call stack.
 typedef struct CallStackState {
-    // The address of the return address of each frame.
-    uint64_t *ret_addrs;
-    // The base pointers.
-    unw_word_t *bps;
-    // The 16 registers recorded for each frame.
-    unw_word_t **registers;
-    // The stack map records which correspond to each call on the stack.
-    stack_map_record_t *records;
-    // The number of frames on the stack.
+    frame_t *frames;
     uint32_t depth;
+    // The return address of main
+    uint64_t main_ret_addr;
+    // The BP of main
+    uint64_t main_bp;
 } call_stack_state_t;
 
 typedef struct RestoredStackSegment {
@@ -33,10 +39,12 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
 
 void free_call_stack_state(call_stack_state_t *state);
 
-void get_restored_state(stack_map_t *sm,
-        call_stack_state_t *state,
-        restored_segment_t seg, uint64_t *saved_ret_addrs,
-        uint32_t *sizes);
+call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t ppid,
+    uint64_t callback_ret_addr, uint64_t end_addr);
+
+void insert_real_addresses(call_stack_state_t *state, restored_segment_t seg,
+        uint64_t last_bp, uint64_t last_ret_addr);
+
 /*
  * Return all the locations recorded in the stack map `sm` for each of
  * the frames in `state`. The direct locations need to be restored later.
@@ -64,15 +72,9 @@ void restore_register_state(call_stack_state_t *state, uint64_t r[]);
 void collect_map_records(call_stack_state_t *state, stack_map_t *sm);
 
 /*
- * Inserts the specified record at the head of the list of records in `state`.
- */
-void append_record(call_stack_state_t *state, stack_map_record_t first_rec);
-
-/*
  * Construct a state which represents the frames in `dest` followed by those in
  * `state`.
  */
-void combine_states(call_stack_state_t *dest, call_stack_state_t *state,
-                    stack_map_record_t first_rec);
+void combine_states(call_stack_state_t *dest, call_stack_state_t *state);
 
 #endif // CALL_STACK_STATE_H

@@ -153,7 +153,7 @@ stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_ad
     stack_map_record_t* call_rec =
         stmap_first_rec_after_addr(sm, return_addr);
     if (!call_rec) {
-        errx(1, "Call record not found. Exiting.\n");
+        return NULL;
     }
     stack_map_record_t *unopt_call_rec =
         stmap_get_map_record(sm, ~call_rec->patchpoint_id);
