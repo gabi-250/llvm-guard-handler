@@ -174,11 +174,12 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
     size_t loc_index = 0;
     size_t new_size = 0;
     // Each record corresponds to a stack frame.
-    for (size_t i = 0; i + 1 < state->depth; ++i) {
+    for (size_t i = 0; i < state->depth; ++i) {
         stack_map_record_t opt_rec = state->frames[i].record;
         stack_map_record_t *unopt_rec =
             stmap_get_map_record(sm, ~opt_rec.patchpoint_id);
-        new_size += opt_rec.num_locations * sizeof(uint64_t);
+        num_locations += opt_rec.num_locations;
+        new_size = num_locations * sizeof(uint64_t);
         if (!new_size) {
             continue;
         }
@@ -195,7 +196,6 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
             // represents the size of location `j` is a `uint64_t` value,
             // because `LiveVariablesPass` records location sizes as 64-bit
             // values.
-            //
             stmap_get_location_value(sm, opt_rec.locations[j + 1],
                                      state->frames[i].registers,
                                      (void *)state->frames[i].bp,
@@ -209,22 +209,10 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
                                      *loc_size);
             uint64_t location_value_addr = (uint64_t) opt_location_value;
             uint64_t loc_size_addr = (uint64_t) loc_size;
-            if (type == DIRECT || type == REGISTER) {
-                memcpy(*locs + loc_index, &location_value_addr, sizeof(uint64_t));
-                ++loc_index;
-                memcpy(*locs + loc_index, &loc_size_addr, sizeof(uint64_t));
-                ++loc_index;
-            } else if (type == INDIRECT) {
-                errx(1, "Not implemented - indirect.\n");
-            } else if (type != CONSTANT && type != CONST_INDEX) {
-                // A type which is not CONSTANT or CONST_INDEX is considered
-                // unknown (no other types are defined in the stack map
-                // documentation).
-                errx(1, "Unknown record - %u. Exiting\n", type);
-            } else {
-                free(opt_location_value);
-                free(loc_size);
-            }
+            memcpy(*locs + loc_index, &location_value_addr, sizeof(uint64_t));
+            ++loc_index;
+            memcpy(*locs + loc_index, &loc_size_addr, sizeof(uint64_t));
+            ++loc_index;
         }
     }
     return num_locations;
@@ -249,7 +237,7 @@ void restore_unopt_stack(stack_map_t *sm, call_stack_state_t *state)
     // This is used to index `locations`.
     int loc_index = 0;
     // Restore all the stacks on the call stack
-    for (int i = 0; i + 1 < state->depth; ++i) {
+    for (int i = 0; i < state->depth; ++i) {
         // Get the unoptimized stack map record associated with this frame.
         stack_map_record_t *unopt_rec = stmap_get_map_record(sm,
                 ~state->frames[i].record.patchpoint_id);
@@ -260,21 +248,19 @@ void restore_unopt_stack(stack_map_t *sm, call_stack_state_t *state)
         // size of the previous record.
         for (int j = 0; j < unopt_rec->num_locations - 1; j += 2) {
             location_type type = unopt_rec->locations[j].kind;
-            uint64_t opt_location_addr = locations[loc_index];
-            uint64_t loc_size = *(uint64_t *)locations[loc_index + 1];
+            uint64_t opt_location_addr = locations[loc_index++];
+            uint64_t loc_size = *(uint64_t *)locations[loc_index++];
             if (type == DIRECT) {
                 uint64_t unopt_addr = (uint64_t)state->frames[i].bp +
                     unopt_rec->locations[j].offset;
                 memcpy((void *)unopt_addr, (void *)opt_location_addr,
                         loc_size);
-                loc_index += 2;
             } else if (type == REGISTER) {
                 uint16_t reg_num = unopt_rec->locations[j].dwarf_reg_num;
                 assert_valid_reg_num(reg_num);
                 // Save the new value of the register (it is restored later).
                 memcpy(state->frames[i].registers + reg_num,
-                       &opt_location_addr, loc_size);
-                loc_index += 2;
+                       (void *)opt_location_addr, loc_size);
             } else if (type == INDIRECT) {
                 errx(1, "Not implemented - indirect.\n");
             } else if (type != CONSTANT && type != CONST_INDEX) {
