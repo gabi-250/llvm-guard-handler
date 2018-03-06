@@ -13,6 +13,7 @@ typedef struct Frame {
     // The stack map record which correspond to this call.
     stack_map_record_t record;
     uint64_t size;
+    unw_word_t bp2;
 } frame_t;
 
 // The state of the call stack.
@@ -23,6 +24,8 @@ typedef struct CallStackState {
     uint64_t main_ret_addr;
     // The BP of main
     uint64_t main_bp;
+
+    unw_word_t *main_regs;
 } call_stack_state_t;
 
 typedef struct RestoredStackSegment {
