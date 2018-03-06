@@ -84,26 +84,28 @@ void __guard_failure(int64_t sm_id)
                             state->main_ret_addr;
         call_stack_state_t *restored_state = get_restored_state(sm, sm_id,
                 callback_ret_addr, last_addr);
+        uint64_t last_bp = state->main_bp;
+        uint64_t last_ret_addr =
+           state->main_ret_addr;
+        restored_state->frames[0].record = *opt_rec;
+        // XXX opt or unopt
+        restored_state->frames[0].size   = unopt_size_rec->stack_size;
+        combine_states(restored_state, state);
+        state = restored_state;
+
         uint64_t size_to_alloca = 0;
-        for (size_t i = 0; i < restored_state->depth + 1; ++i) {
+        for (size_t i = 0; i < state->depth; ++i) {
             // XXX calling convention, function arguments?... 8 for the ret addr
             size_to_alloca += restored_state->frames[i].size + 8;
         }
-
         // The alloca has to happen here
         seg.start_addr            = (uint64_t)alloca(size_to_alloca);
         seg.total_size            = size_to_alloca;
         seg.size                  = unopt_size_rec->stack_size;
-
-        uint64_t last_bp = state->depth ? state->frames[0].bp : state->main_bp;
-        uint64_t last_ret_addr =
-            state->depth ? state->frames[0].ret_addr : state->main_ret_addr;
-        insert_real_addresses(restored_state, seg, last_bp,
+        insert_real_addresses(state, seg, last_bp,
                               *(uint64_t *)last_ret_addr);
-        restored_state->frames[0].record = *opt_rec;
-        restored_state->frames[0].size   = unopt_size_rec->stack_size;
-        combine_states(restored_state, state);
-        state = restored_state;
+        // make sure frame[0] contains the register state of the function in
+        // which the other functions were inlined (main for example)
     }
 
     // Restore the stack state.

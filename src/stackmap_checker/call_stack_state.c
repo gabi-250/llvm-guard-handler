@@ -130,6 +130,8 @@ call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t ppid,
     // The number of frames on the stack.
     uint32_t depth = 0;
     // Find the 'return addresses' of the inlined functions
+    // XXX
+    uint64_t last_max = 0;
     while(rec->instr_offset + size_rec->fun_addr != end_addr) {
         stack_map_record_t *unopt_rec =
             stmap_get_map_record(sm, ~rec->patchpoint_id);
@@ -143,8 +145,11 @@ call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t ppid,
             unopt_rec->instr_offset + unopt_size_rec->fun_addr + 13;
         uint64_t opt_ret_addr = rec->instr_offset + size_rec->fun_addr + 1;
         ++depth;
+        frames[depth].size      = unopt_size_rec->stack_size;
         frames[depth].record    = *rec;
-        frames[depth].size      = size_rec->stack_size;
+        last_max = size_rec->stack_size > last_max ? size_rec->stack_size : last_max;
+        last_max = unopt_size_rec->stack_size > last_max ? unopt_size_rec->stack_size
+            : last_max;
         rec = stmap_first_rec_after_addr(sm, opt_ret_addr);
         if (!rec) {
             break;
@@ -155,6 +160,8 @@ call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t ppid,
         }
     }
     restored_state->depth  = depth + 1; // + 1 leak
+    frames[restored_state->depth - 1].registers = calloc(16, sizeof(unw_word_t));
+    frames[restored_state->depth - 1].size = last_max;
     restored_state->frames = frames;
     return restored_state;
 }
@@ -303,18 +310,35 @@ void combine_states(call_stack_state_t *dest, call_stack_state_t *state)
         for (size_t j = 0; j < 16; ++j) {
             if (!state->depth) {
                 dest->frames[i].registers[j] = state->main_regs[j];
-                dest->frames[i].bp2 = state->main_bp;
             } else {
                 dest->frames[i].registers[j] = state->frames[0].registers[j];
-                dest->frames[i].bp2 = state->frames[0].bp;
             }
         }
+        if (!state->depth) {
+            dest->frames[i].bp2 = state->main_bp;
+        } else {
+            dest->frames[i].bp2 = state->frames[0].bp;
+        }
     }
+    for (size_t i = 0; i < state->depth; ++i) {
+        state->frames[i].bp2 = state->frames[0].bp;
+        // XXX hack to be fixed
+        state->frames[i].ret_addr = *(uint64_t *)state->frames[i].ret_addr;
+    }
+    if (state->depth) {
+        dest->frames[dest->depth - 1].ret_addr = state->frames[0].ret_addr;
+        // XXX
+        free(state->frames[0].registers);
+        memmove(state->frames, state->frames + 1,
+                (state->depth - 1) * sizeof(frame_t));
 
+        --state->depth;
+    }
     uint32_t new_depth = dest->depth + state->depth;
     dest->frames = realloc(dest->frames, new_depth * sizeof(frame_t));
     memcpy(dest->frames + dest->depth, state->frames,
            state->depth * sizeof(frame_t));
+    dest->depth = new_depth;
     free(state);
 }
 
