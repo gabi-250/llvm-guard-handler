@@ -2,28 +2,46 @@
 #define CALL_STACK_STATE_H
 
 #include "stmap.h"
+#include <stdbool.h>
 
 #define MAX_CALL_STACK_DEPTH 256
+#define REGISTER_COUNT 16
+
+typedef struct Frame {
+    // The address of the return address of the frame.
+    uint64_t ret_addr;
+    // The return address of the optimized version of the frame.
+    uint64_t opt_ret_addr;
+    // The stack size (in the prologue/epilogue).
+    uint64_t size;
+    // The base pointer.
+    unw_word_t bp;
+    // The 'real' base pointer. bp != real_bp for inlined functions.
+    unw_word_t real_bp;
+    // The 16 registers recorded for each frame.
+    unw_word_t *registers;
+    // The stack map record which correspond to this call.
+    stack_map_record_t record;
+    // Whether this is the frame of an inlined function.
+    bool inlined;
+} frame_t;
 
 // The state of the call stack.
 typedef struct CallStackState {
-    // The address of the return address of each frame.
-    uint64_t *ret_addrs;
-    // The base pointers.
-    unw_word_t *bps;
-    // The 16 registers recorded for each frame.
-    unw_word_t **registers;
-    // The stack map records which correspond to each call on the stack.
-    stack_map_record_t *records;
-    // The number of frames on the stack.
+    frame_t *frames;
     uint32_t depth;
+    // The address of the return address of main.
+    uint64_t main_ret_addr;
+    // The BP of main.
+    uint64_t main_bp;
+    // The values of the general-purpose registers in main.
+    unw_word_t *main_regs;
 } call_stack_state_t;
 
 /*
  * Return the state of the call stack.
  */
-call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
-                                         unw_context_t context);
+call_stack_state_t* get_call_stack_state(unw_cursor_t cursor);
 
 void free_call_stack_state(call_stack_state_t *state);
 
@@ -54,8 +72,14 @@ void restore_register_state(call_stack_state_t *state, uint64_t r[]);
 void collect_map_records(call_stack_state_t *state, stack_map_t *sm);
 
 /*
- * Inserts the specified record at the head of the list of records in `state`.
+ * Insert the specified frames at position `index` in `state`.
  */
-void append_record(call_stack_state_t *state, stack_map_record_t first_rec);
+void insert_frames(call_stack_state_t *state, size_t index,
+                   frame_t *frames, size_t num_frames);
+
+/*
+ * Return `num_frames` empty frames.
+ */
+frame_t* alloc_empty_frames(size_t num_frames);
 
 #endif // CALL_STACK_STATE_H
