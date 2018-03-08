@@ -8,7 +8,6 @@
 #include <string.h>
 #include <err.h>
 #include <signal.h>
-#include <stdbool.h>
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 
@@ -59,14 +58,18 @@ void __guard_failure(int64_t sm_id)
         errx(1, "Record not found.");
     }
 
+    bool inlined = 0;
     // Get the call stack state.
-    call_stack_state_t *state = get_call_stack_state(cursor, context);
+    call_stack_state_t *state = get_call_stack_state(cursor);
+    call_stack_state_t *state_copy = get_state_copy(state);
     collect_map_records(state, sm);
+    uint32_t old_depth = state->depth;
+    collect_inlined_frames(state, sm);
+    inlined = old_depth != state->depth;
     // Get the end address of the function in which a guard failed.
     void *end_addr = get_sym_end(binary_path, (void *)opt_size_rec->fun_addr);
     uint64_t callback_ret_addr = (uint64_t) __builtin_return_address(0);
     restored_segment_t seg;
-    bool inlined = false;
     // Check if the guard failed in an inlined function or not.
     if (callback_ret_addr >= opt_size_rec->fun_addr &&
         callback_ret_addr < (uint64_t)end_addr) {
@@ -78,36 +81,25 @@ void __guard_failure(int64_t sm_id)
         restore_register_state(state, r);
     } else {
         fprintf(stderr, "A guard failed in an inlined function.\n");
-        inlined = true;
+        inlined = 1;
         uint64_t last_addr =
             state->depth ? state->frames[state->depth - 1].ret_addr :
                             state->main_ret_addr;
-        call_stack_state_t *restored_state = get_restored_state(sm, sm_id,
-                callback_ret_addr, last_addr);
-        uint64_t last_bp = state->main_bp;
-        uint64_t last_ret_addr =
-           state->main_ret_addr;
-        restored_state->frames[0].record = *opt_rec;
-        // XXX opt or unopt
-        restored_state->frames[0].size   = unopt_size_rec->stack_size;
-        combine_states(restored_state, state);
-        state = restored_state;
+        call_stack_state_t *restored_state =
+            get_restored_state(sm, callback_ret_addr, last_addr);
+
 
         uint64_t size_to_alloca = 0;
         for (size_t i = 0; i < state->depth; ++i) {
             // XXX calling convention, function arguments?... 8 for the ret addr
             size_to_alloca += restored_state->frames[i].size + 8;
         }
+        uint64_t last_bp = state->main_bp;
+        uint64_t last_ret_addr = state->main_ret_addr;
         // The alloca has to happen here
-        seg.start_addr            = (uint64_t)alloca(size_to_alloca);
-        seg.total_size            = size_to_alloca;
-        seg.size                  = unopt_size_rec->stack_size;
-        insert_real_addresses(state, seg, last_bp,
-                              *(uint64_t *)last_ret_addr);
         // make sure frame[0] contains the register state of the function in
         // which the other functions were inlined (main for example)
     }
-
     // Restore the stack state.
     restore_unopt_stack(sm, state);
     restore_register_state(state, r);

@@ -2,18 +2,21 @@
 #define CALL_STACK_STATE_H
 
 #include "stmap.h"
+#include <stdbool.h>
 
 typedef struct Frame {
     // The address of the return address of the frame.
     uint64_t ret_addr;
+    uint64_t opt_ret_addr;
+    uint64_t size;
     // The base pointer.
     unw_word_t bp;
+    unw_word_t real_bp;
     // The 16 registers recorded for each frame.
     unw_word_t *registers;
     // The stack map record which correspond to this call.
     stack_map_record_t record;
-    uint64_t size;
-    unw_word_t bp2;
+    bool inlined;
 } frame_t;
 
 // The state of the call stack.
@@ -37,16 +40,15 @@ typedef struct RestoredStackSegment {
 /*
  * Return the state of the call stack.
  */
-call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
-                                         unw_context_t context);
+call_stack_state_t* get_call_stack_state(unw_cursor_t cursor);
 
 void free_call_stack_state(call_stack_state_t *state);
 
-call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t ppid,
-    uint64_t callback_ret_addr, uint64_t end_addr);
+call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t start_addr,
+                                       uint64_t end_addr);
 
 void insert_real_addresses(call_stack_state_t *state, restored_segment_t seg,
-        uint64_t last_bp, uint64_t last_ret_addr);
+                           uint64_t last_bp, uint64_t last_ret_addr);
 
 /*
  * Return all the locations recorded in the stack map `sm` for each of
@@ -74,10 +76,11 @@ void restore_register_state(call_stack_state_t *state, uint64_t r[]);
  */
 void collect_map_records(call_stack_state_t *state, stack_map_t *sm);
 
-/*
- * Construct a state which represents the frames in `dest` followed by those in
- * `state`.
- */
-void combine_states(call_stack_state_t *dest, call_stack_state_t *state);
+call_stack_state_t* get_state_copy(call_stack_state_t *state);
+
+void insert_frames(call_stack_state_t *state, size_t index,
+                   frame_t *frames, size_t num_frames);
+
+void collect_inlined_frames(call_stack_state_t *state, stack_map_t *sm);
 
 #endif // CALL_STACK_STATE_H

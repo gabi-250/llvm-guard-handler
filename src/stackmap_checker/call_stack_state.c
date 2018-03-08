@@ -1,4 +1,5 @@
 #include "call_stack_state.h"
+#include "utils.h"
 #include "stmap.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -7,8 +8,29 @@
 
 #define MAX_BUF_SIZE 128
 
-call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
-                                         unw_context_t context)
+unw_word_t* get_registers(unw_cursor_t cursor)
+{
+    unw_word_t *registers = calloc(16, sizeof(unw_word_t));
+    unw_get_reg(&cursor, UNW_X86_64_RAX, &registers[0]);
+    unw_get_reg(&cursor, UNW_X86_64_RDX, &registers[1]);
+    unw_get_reg(&cursor, UNW_X86_64_RCX, &registers[2]);
+    unw_get_reg(&cursor, UNW_X86_64_RBX, &registers[3]);
+    unw_get_reg(&cursor, UNW_X86_64_RSI, &registers[4]);
+    unw_get_reg(&cursor, UNW_X86_64_RDI, &registers[5]);
+    unw_get_reg(&cursor, UNW_X86_64_RBP, &registers[6]);
+    unw_get_reg(&cursor, UNW_X86_64_RSP, &registers[7]);
+    unw_get_reg(&cursor, UNW_X86_64_R8,  &registers[8]);
+    unw_get_reg(&cursor, UNW_X86_64_R9,  &registers[9]);
+    unw_get_reg(&cursor, UNW_X86_64_R10, &registers[10]);
+    unw_get_reg(&cursor, UNW_X86_64_R11, &registers[11]);
+    unw_get_reg(&cursor, UNW_X86_64_R12, &registers[12]);
+    unw_get_reg(&cursor, UNW_X86_64_R13, &registers[13]);
+    unw_get_reg(&cursor, UNW_X86_64_R14, &registers[14]);
+    unw_get_reg(&cursor, UNW_X86_64_R15, &registers[15]);
+    return registers;
+}
+
+call_stack_state_t* get_call_stack_state(unw_cursor_t cursor)
 {
     call_stack_state_t *state = malloc(sizeof(call_stack_state_t));
     frame_t *frames = NULL;
@@ -23,54 +45,22 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor,
         char fun_name[MAX_BUF_SIZE];
         unw_get_proc_name(&cursor, fun_name, sizeof(fun_name), &off);
         if (!strcmp(fun_name, "main")) {
-            unw_word_t rbp;
-            unw_get_reg(&cursor, UNW_X86_64_RBP, &rbp);
-            state->main_ret_addr = (uint64_t)(rbp + 8);
-            state->main_bp = (uint64_t) rbp;
-            state->main_regs = calloc(16, sizeof(unw_word_t));
-            unw_get_reg(&cursor, UNW_X86_64_RAX, &state->main_regs[0]);
-            unw_get_reg(&cursor, UNW_X86_64_RDX, &state->main_regs[1]);
-            unw_get_reg(&cursor, UNW_X86_64_RCX, &state->main_regs[2]);
-            unw_get_reg(&cursor, UNW_X86_64_RBX, &state->main_regs[3]);
-            unw_get_reg(&cursor, UNW_X86_64_RSI, &state->main_regs[4]);
-            unw_get_reg(&cursor, UNW_X86_64_RDI, &state->main_regs[5]);
-            unw_get_reg(&cursor, UNW_X86_64_RBP, &state->main_regs[6]);
-            unw_get_reg(&cursor, UNW_X86_64_RSP, &state->main_regs[7]);
-            unw_get_reg(&cursor, UNW_X86_64_R8,  &state->main_regs[8]);
-            unw_get_reg(&cursor, UNW_X86_64_R9,  &state->main_regs[9]);
-            unw_get_reg(&cursor, UNW_X86_64_R10, &state->main_regs[10]);
-            unw_get_reg(&cursor, UNW_X86_64_R11, &state->main_regs[11]);
-            unw_get_reg(&cursor, UNW_X86_64_R12, &state->main_regs[12]);
-            unw_get_reg(&cursor, UNW_X86_64_R13, &state->main_regs[13]);
-            unw_get_reg(&cursor, UNW_X86_64_R14, &state->main_regs[14]);
-            unw_get_reg(&cursor, UNW_X86_64_R15, &state->main_regs[15]);
+            state->main_regs = get_registers(cursor);
+            state->main_bp = state->main_regs[UNW_X86_64_RBP];
+            state->main_ret_addr = (uint64_t)(state->main_bp + 8);
             break;
         }
-        // Always allocate an extra frame
-        frames = realloc(frames, (depth + 1) * sizeof(frame_t));
-        frames[depth].registers = calloc(16, sizeof(unw_word_t));
-        unw_get_reg(&cursor, UNW_X86_64_RAX, &frames[depth].registers[0]);
-        unw_get_reg(&cursor, UNW_X86_64_RDX, &frames[depth].registers[1]);
-        unw_get_reg(&cursor, UNW_X86_64_RCX, &frames[depth].registers[2]);
-        unw_get_reg(&cursor, UNW_X86_64_RBX, &frames[depth].registers[3]);
-        unw_get_reg(&cursor, UNW_X86_64_RSI, &frames[depth].registers[4]);
-        unw_get_reg(&cursor, UNW_X86_64_RDI, &frames[depth].registers[5]);
-        unw_get_reg(&cursor, UNW_X86_64_RBP, &frames[depth].registers[6]);
-        unw_get_reg(&cursor, UNW_X86_64_RSP, &frames[depth].registers[7]);
-        unw_get_reg(&cursor, UNW_X86_64_R8,  &frames[depth].registers[8]);
-        unw_get_reg(&cursor, UNW_X86_64_R9,  &frames[depth].registers[9]);
-        unw_get_reg(&cursor, UNW_X86_64_R10, &frames[depth].registers[10]);
-        unw_get_reg(&cursor, UNW_X86_64_R11, &frames[depth].registers[11]);
-        unw_get_reg(&cursor, UNW_X86_64_R12, &frames[depth].registers[12]);
-        unw_get_reg(&cursor, UNW_X86_64_R13, &frames[depth].registers[13]);
-        unw_get_reg(&cursor, UNW_X86_64_R14, &frames[depth].registers[14]);
-        unw_get_reg(&cursor, UNW_X86_64_R15, &frames[depth].registers[15]);
+        frames = realloc(frames, ++depth * sizeof(frame_t));
+        frames[depth - 1].registers = get_registers(cursor);
         // Store the address of the return address.
-        frames[depth].ret_addr =
-            (uint64_t)(frames[depth].registers[UNW_X86_64_RBP] + 8);
+        frames[depth - 1].ret_addr =
+            (uint64_t)(frames[depth - 1].registers[UNW_X86_64_RBP] + 8);
+        frames[depth - 1].opt_ret_addr =
+            *(uint64_t *)(frames[depth - 1].registers[UNW_X86_64_RBP] + 8);
         // Store the current BP.
-        frames[depth].bp = frames[depth].bp2 = frames[depth].registers[UNW_X86_64_RBP];
-        ++depth;
+        frames[depth - 1].bp = frames[depth - 1].real_bp =
+            frames[depth - 1].registers[UNW_X86_64_RBP];
+        frames[depth - 1].inlined = 0;
     }
     state->frames = frames;
     state->depth  = depth;
@@ -99,13 +89,11 @@ void collect_map_records(call_stack_state_t *state, stack_map_t *sm)
                 sm,
                 ~sm->stk_map_records[sm_pos->stk_map_record_index].patchpoint_id);
         // Store each record that corresponds to a frame on the call stack.
-        if (i + 1 < state->depth) {
-            state->frames[i + 1].record = *opt_stk_map_rec;
-            // XXX which stack size?
-            stack_size_record_t *opt_size_rec =
-                stmap_get_size_record(sm, opt_stk_map_rec->index);
-            state->frames[i].size = opt_size_rec->stack_size;
-        }
+        state->frames[i].record = *opt_stk_map_rec;
+        // XXX which stack size?
+        stack_size_record_t *opt_size_rec =
+            stmap_get_size_record(sm, opt_stk_map_rec->index);
+        state->frames[i].size = opt_size_rec->stack_size;
         free(sm_pos);
     }
 }
@@ -119,37 +107,90 @@ void free_call_stack_state(call_stack_state_t *state)
     free(state);
 }
 
-call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t ppid,
-    uint64_t start_addr, uint64_t end_addr)
+call_stack_state_t* get_state_copy(call_stack_state_t *state) {
+    call_stack_state_t *copy = malloc(sizeof(call_stack_state_t));
+    memcpy(copy, state, sizeof(call_stack_state_t));
+    return copy;
+}
+
+void insert_frames(call_stack_state_t *state, size_t index,
+                   frame_t *frames, size_t num_frames)
 {
-    call_stack_state_t *restored_state = malloc(sizeof(call_stack_state_t));
-    frame_t *frames = NULL;
+    uint32_t new_depth = state->depth + num_frames;
+    state->frames = realloc(state->frames, new_depth * sizeof(frame_t));
+    memmove(state->frames + index + num_frames, state->frames + index,
+            (state->depth - index) * sizeof(frame_t));
+    memcpy(state->frames + index, frames, num_frames * sizeof(frame_t));
+    state->depth = new_depth;
+}
+
+void collect_inlined_frames(call_stack_state_t *state, stack_map_t *sm)
+{
+    char *binary_path = get_binary_path();
+    call_stack_state_t *state_copy = get_state_copy(state);
+    for (size_t i = 0; i < state_copy->depth; ++i) {
+        stack_map_record_t *record =
+                &state_copy->frames[i].record;
+        stack_size_record_t *size_record = stmap_get_size_record(sm, record->index);
+        void *end_addr = get_sym_end(binary_path, (void *)size_record->fun_addr);
+        uint64_t callback_ret_addr = record->instr_offset + size_record->fun_addr;
+        if (state_copy->frames[i].opt_ret_addr >= size_record->fun_addr &&
+            state_copy->frames[i].opt_ret_addr < (uint64_t)end_addr) {
+            fprintf(stderr, "Regular frame!\n");
+        } else {
+            fprintf(stderr, "Inlined!\n");
+            stack_map_record_t *record = &state_copy->frames[i - 1].record;
+            stack_size_record_t *size_record =
+                stmap_get_size_record(sm, record->index);
+            uint64_t opt_ret_addr = size_record->fun_addr + record->instr_offset;
+            void *end_addr = get_sym_end(binary_path, (void *)size_record->fun_addr);
+            size_record =
+                stmap_get_size_record(sm, state_copy->frames[i].record.index);
+            end_addr = get_sym_end(binary_path, (void *)size_record->fun_addr);
+            uint64_t next_addr =
+                state_copy->frames[i].opt_ret_addr + PATCHPOINT_CALL_SIZE + 1;
+            call_stack_state_t *res_state =
+                get_restored_state(sm, next_addr, (uint64_t)end_addr);
+            for (size_t j = 0; j < res_state->depth; ++j) {
+                // XXX
+                res_state->frames[j].real_bp = state->frames[i].bp;
+            }
+            insert_frames(state, i + 1, res_state->frames, res_state->depth);
+        }
+    }
+    free(state_copy);
+    free(binary_path);
+}
+
+call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t start_addr,
+                                       uint64_t end_addr)
+{
+    call_stack_state_t *state = malloc(sizeof(call_stack_state_t));
+    state->depth = 0;
+    state->frames = NULL;
     stack_map_record_t *rec = stmap_first_rec_after_addr(sm, start_addr);
     stack_size_record_t *size_rec = stmap_get_size_record(sm, rec->index);
     // The stack map records which correspond to each call on the stack.
     // The number of frames on the stack.
-    uint32_t depth = 0;
     // Find the 'return addresses' of the inlined functions
-    // XXX
-    uint64_t last_max = 0;
     while(rec->instr_offset + size_rec->fun_addr != end_addr) {
         stack_map_record_t *unopt_rec =
             stmap_get_map_record(sm, ~rec->patchpoint_id);
         stack_size_record_t *unopt_size_rec =
             stmap_get_size_record(sm, unopt_rec->index);
-        frames = realloc(frames, (depth + 2) * sizeof(frame_t));
-        frames[depth].registers     = calloc(16, sizeof(unw_word_t));
+        ++state->depth;
+        state->frames = realloc(state->frames, state->depth * sizeof(frame_t));
+        state->frames[state->depth - 1].registers =
+            calloc(16, sizeof(unw_word_t));
         // XXX ret_addr does not hold the address of the return address
         // should be stored in a separate array
-        frames[depth].ret_addr =
+        state->frames[state->depth - 1].ret_addr =
             unopt_rec->instr_offset + unopt_size_rec->fun_addr + 13;
         uint64_t opt_ret_addr = rec->instr_offset + size_rec->fun_addr + 1;
-        ++depth;
-        frames[depth].size      = unopt_size_rec->stack_size;
-        frames[depth].record    = *rec;
-        last_max = size_rec->stack_size > last_max ? size_rec->stack_size : last_max;
-        last_max = unopt_size_rec->stack_size > last_max ? unopt_size_rec->stack_size
-            : last_max;
+        state->frames[state->depth - 1].size =
+            unopt_size_rec->stack_size;
+        state->frames[state->depth - 1].record = *rec;
+        state->frames[state->depth - 1].inlined = 1;
         rec = stmap_first_rec_after_addr(sm, opt_ret_addr);
         if (!rec) {
             break;
@@ -159,11 +200,7 @@ call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t ppid,
             errx(1, "Size record not found\n");
         }
     }
-    restored_state->depth  = depth + 1; // + 1 leak
-    frames[restored_state->depth - 1].registers = calloc(16, sizeof(unw_word_t));
-    frames[restored_state->depth - 1].size = last_max;
-    restored_state->frames = frames;
-    return restored_state;
+    return state;
 }
 
 void insert_real_addresses(call_stack_state_t *state, restored_segment_t seg,
@@ -176,14 +213,18 @@ void insert_real_addresses(call_stack_state_t *state, restored_segment_t seg,
         // returns in __unopt_more_indirection, where the PP failed
         // must add that as the first stack size
         state->frames[i].bp = (uint64_t)cur_bp;
-        *(uint64_t *)(cur_bp + 8) = state->frames[i].ret_addr;
+        if (state->frames[i].inlined) {
+            *(uint64_t *)(cur_bp + 8) = state->frames[i].ret_addr;
+        } else {
+            *(uint64_t *)(cur_bp + 8) = *(uint64_t *)state->frames[i].ret_addr;
+        }
         state->frames[i].ret_addr = (uint64_t)(cur_bp + 8);
         state->frames[i].registers = calloc(16, sizeof(unw_word_t));
         if (i > 0) {
             *(uint64_t *)state->frames[i - 1].bp = state->frames[i].bp;
         }
         cur_bp += 8;
-        if (i + 1 < state->depth) {
+        if (i < state->depth) {
             cur_bp += state->frames[i + 1].size;
         }
     }
@@ -224,13 +265,13 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
             // values.
             stmap_get_location_value(sm, opt_rec.locations[j + 1],
                                      state->frames[i].registers,
-                                     (void *)state->frames[i].bp2,
+                                     (void *)state->frames[i].real_bp,
                                      (void *)&loc_size, sizeof(uint64_t));
             // Now, copy `loc_size` bytes starting at the address indicated by
             // the location at position `j`.
             stmap_get_location_value(sm, opt_rec.locations[j],
                                      state->frames[i].registers,
-                                     (void *)state->frames[i].bp2,
+                                     (void *)state->frames[i].real_bp,
                                      &opt_location_value,
                                      *loc_size);
             uint64_t location_value_addr = (uint64_t) opt_location_value;
@@ -302,43 +343,5 @@ void restore_register_state(call_stack_state_t *state, uint64_t r[])
     for (size_t i = 0; i < 16; ++i) {
         r[i] = (uint64_t)state->frames[0].registers[i];
     }
-}
-
-void combine_states(call_stack_state_t *dest, call_stack_state_t *state)
-{
-    for (size_t i = 0; i < dest->depth; ++i) {
-        for (size_t j = 0; j < 16; ++j) {
-            if (!state->depth) {
-                dest->frames[i].registers[j] = state->main_regs[j];
-            } else {
-                dest->frames[i].registers[j] = state->frames[0].registers[j];
-            }
-        }
-        if (!state->depth) {
-            dest->frames[i].bp2 = state->main_bp;
-        } else {
-            dest->frames[i].bp2 = state->frames[0].bp;
-        }
-    }
-    for (size_t i = 0; i < state->depth; ++i) {
-        state->frames[i].bp2 = state->frames[0].bp;
-        // XXX hack to be fixed
-        state->frames[i].ret_addr = *(uint64_t *)state->frames[i].ret_addr;
-    }
-    if (state->depth) {
-        dest->frames[dest->depth - 1].ret_addr = state->frames[0].ret_addr;
-        // XXX
-        free(state->frames[0].registers);
-        memmove(state->frames, state->frames + 1,
-                (state->depth - 1) * sizeof(frame_t));
-
-        --state->depth;
-    }
-    uint32_t new_depth = dest->depth + state->depth;
-    dest->frames = realloc(dest->frames, new_depth * sizeof(frame_t));
-    memcpy(dest->frames + dest->depth, state->frames,
-           state->depth * sizeof(frame_t));
-    dest->depth = new_depth;
-    free(state);
 }
 
