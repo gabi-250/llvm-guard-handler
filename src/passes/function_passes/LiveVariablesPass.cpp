@@ -47,10 +47,17 @@ struct LiveVariablesPass: public FunctionPass {
           if (callInst.isInlineAsm()) {
             continue;
           }
-          if (getPatchpointType(calledFun).producesStackmapRecords()) {
+          auto type = getPatchpointType(calledFun);
+          if (type.producesStackmapRecords()) {
             // This is a stackmap/patchpoint call, so it needs to record all
             // the variables live at this point.
-            auto liveVariables = getLiveRegisters(*it);
+            vector<Value *> liveVariables;
+            auto prevInst = it->getPrevNode();
+            if (type.type == PatchpointType::STACKMAP && prevInst) {
+              liveVariables = getLiveRegisters(*prevInst);
+            } else {
+              liveVariables = getLiveRegisters(*it);
+            }
             vector<Value *> args(callInst.arg_begin(), callInst.arg_end());
             // Pass the live locations to the stackmap/patchpoint call. This
             // also inserts the size of each 'live' location into the stackmap.
@@ -68,7 +75,6 @@ struct LiveVariablesPass: public FunctionPass {
     }
     return true;
   }
-
 
   /*
    * Return the list of registers which are live across the given instruction.
@@ -90,8 +96,7 @@ struct LiveVariablesPass: public FunctionPass {
             // `instr`, so it is live across `instr`.
             if (isa<Instruction>(*user)) {
               auto userInst = cast<Instruction>(*user);
-              if (DT.dominates(&instr, userInst) ||
-                  instr.isSameOperationAs(&*userInst)) {
+              if (DT.dominates(&instr, userInst)) {
                 args.push_back(&*it);
                 auto instSize = builder.getInt64(8); // XXX default size
                 // The runtime may need to copy more than 8 bytes starting at
