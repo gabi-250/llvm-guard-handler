@@ -83,4 +83,7 @@ void insert_frames(call_stack_state_t *state, size_t index,
 
 void collect_inlined_frames(call_stack_state_t *state, stack_map_t *sm);
 
+frame_t* alloc_empty_frames(size_t num_frames);
+void free_frame();
+
 #endif // CALL_STACK_STATE_H

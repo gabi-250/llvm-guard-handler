@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <err.h>
+#include <assert.h>
 
 #define MAX_BUF_SIZE 128
 
@@ -48,7 +49,6 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor)
             state->main_regs = get_registers(cursor);
             state->main_bp = state->main_regs[UNW_X86_64_RBP];
             state->main_ret_addr = (uint64_t)(state->main_bp + 8);
-            break;
         }
         frames = realloc(frames, ++depth * sizeof(frame_t));
         frames[depth - 1].registers = get_registers(cursor);
@@ -61,7 +61,12 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor)
         frames[depth - 1].bp = frames[depth - 1].real_bp =
             frames[depth - 1].registers[UNW_X86_64_RBP];
         frames[depth - 1].inlined = 0;
+        if (!strcmp(fun_name, "main")) {
+            break;
+        }
     }
+    /*frames[depth - 1].size = state->main_regs[UNW_X86_64_RBP] -*/
+        /*state->main_regs[UNW_X86_64_RSP] + 8;*/
     state->frames = frames;
     state->depth  = depth;
     return state;
@@ -69,7 +74,7 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor)
 
 void collect_map_records(call_stack_state_t *state, stack_map_t *sm)
 {
-    for (size_t i = 0; i < state->depth; ++i) {
+    for (size_t i = 0; i + 1 < state->depth; ++i) {
         // `sm_pos` identifies a position in a function. It is essentially an
         // address. A stack map record is always associated with a stack size
         // record. Each stack size record uniquely identifies a function, while
@@ -128,7 +133,7 @@ void collect_inlined_frames(call_stack_state_t *state, stack_map_t *sm)
 {
     char *binary_path = get_binary_path();
     call_stack_state_t *state_copy = get_state_copy(state);
-    for (size_t i = 0; i < state_copy->depth; ++i) {
+    for (size_t i = 0; i + 1 < state_copy->depth; ++i) {
         stack_map_record_t *record =
                 &state_copy->frames[i].record;
         stack_size_record_t *size_record = stmap_get_size_record(sm, record->index);
@@ -152,10 +157,12 @@ void collect_inlined_frames(call_stack_state_t *state, stack_map_t *sm)
             call_stack_state_t *res_state =
                 get_restored_state(sm, next_addr, (uint64_t)end_addr);
             for (size_t j = 0; j < res_state->depth; ++j) {
+                res_state->frames[j].real_bp = state_copy->frames[i].real_bp;
                 // XXX
                 res_state->frames[j].real_bp = state->frames[i].bp;
             }
             insert_frames(state, i + 1, res_state->frames, res_state->depth);
+            free_call_stack_state(res_state);
         }
     }
     free(state_copy);
@@ -187,8 +194,7 @@ call_stack_state_t* get_restored_state(stack_map_t *sm, uint64_t start_addr,
         state->frames[state->depth - 1].ret_addr =
             unopt_rec->instr_offset + unopt_size_rec->fun_addr + 13;
         uint64_t opt_ret_addr = rec->instr_offset + size_rec->fun_addr + 1;
-        state->frames[state->depth - 1].size =
-            unopt_size_rec->stack_size;
+        state->frames[state->depth - 1].size = unopt_size_rec->stack_size;
         state->frames[state->depth - 1].record = *rec;
         state->frames[state->depth - 1].inlined = 1;
         rec = stmap_first_rec_after_addr(sm, opt_ret_addr);
@@ -209,14 +215,14 @@ void insert_real_addresses(call_stack_state_t *state, restored_segment_t seg,
     // now add the return addresses to the new 'stack' and save the bps
     // start with the high address
     char *cur_bp = (char *) seg.start_addr;// + seg.total_size;
-    for (size_t i = 0; i < state->depth; ++i) {
+    for (size_t i = 0; i + 1 < state->depth; ++i) {
         // returns in __unopt_more_indirection, where the PP failed
         // must add that as the first stack size
         state->frames[i].bp = (uint64_t)cur_bp;
         if (state->frames[i].inlined) {
-            *(uint64_t *)(cur_bp + 8) = state->frames[i].ret_addr;
+            *(uint64_t *)(cur_bp + 8) = state->frames[i + 1].ret_addr;
         } else {
-            *(uint64_t *)(cur_bp + 8) = *(uint64_t *)state->frames[i].ret_addr;
+            *(uint64_t *)(cur_bp + 8) = *(uint64_t *)state->frames[i + 1].ret_addr;
         }
         state->frames[i].ret_addr = (uint64_t)(cur_bp + 8);
         state->frames[i].registers = calloc(16, sizeof(unw_word_t));
@@ -224,9 +230,7 @@ void insert_real_addresses(call_stack_state_t *state, restored_segment_t seg,
             *(uint64_t *)state->frames[i - 1].bp = state->frames[i].bp;
         }
         cur_bp += 8;
-        if (i < state->depth) {
-            cur_bp += state->frames[i + 1].size;
-        }
+        cur_bp += state->frames[i + 1].size;
     }
     // Link the restored stack frames with the frames of the non-inlined
     // functions.
@@ -241,21 +245,19 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
     size_t loc_index = 0;
     size_t new_size = 0;
     // Each record corresponds to a stack frame.
-    for (size_t i = 0; i < state->depth; ++i) {
+    for (size_t i = 0; i + 1 < state->depth; ++i) {
         stack_map_record_t opt_rec = state->frames[i].record;
-        stack_map_record_t *unopt_rec =
-            stmap_get_map_record(sm, ~opt_rec.patchpoint_id);
-        num_locations += opt_rec.num_locations;
+        stack_map_record_t *unopt_rec = stmap_get_map_record(
+                sm, ~state->frames[i].record.patchpoint_id);
+        assert(opt_rec.num_locations == unopt_rec->num_locations);
+        uint64_t real_bp = state->frames[i].real_bp;
+        num_locations += unopt_rec->num_locations;
         new_size = num_locations * sizeof(uint64_t);
-        if (!new_size) {
-            continue;
-        }
         *locs = (uint64_t *)realloc(*locs, new_size);
 
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects
         for (size_t j = 0; j + 1 < unopt_rec->num_locations; j += 2) {
-            location_type type = unopt_rec->locations[j].kind;
             void *opt_location_value = NULL;
             uint64_t *loc_size = NULL;
             // First, retrieve the size of the location at index `j`. This will
@@ -265,21 +267,19 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
             // values.
             stmap_get_location_value(sm, opt_rec.locations[j + 1],
                                      state->frames[i].registers,
-                                     (void *)state->frames[i].real_bp,
+                                     (void *)real_bp,
                                      (void *)&loc_size, sizeof(uint64_t));
             // Now, copy `loc_size` bytes starting at the address indicated by
             // the location at position `j`.
             stmap_get_location_value(sm, opt_rec.locations[j],
                                      state->frames[i].registers,
-                                     (void *)state->frames[i].real_bp,
+                                     (void *)real_bp,
                                      &opt_location_value,
                                      *loc_size);
             uint64_t location_value_addr = (uint64_t) opt_location_value;
             uint64_t loc_size_addr = (uint64_t) loc_size;
-            memcpy(*locs + loc_index, &location_value_addr, sizeof(uint64_t));
-            ++loc_index;
-            memcpy(*locs + loc_index, &loc_size_addr, sizeof(uint64_t));
-            ++loc_index;
+            memcpy(*locs + loc_index++, &location_value_addr, sizeof(uint64_t));
+            memcpy(*locs + loc_index++, &loc_size_addr, sizeof(uint64_t));
         }
     }
     return num_locations;
@@ -304,22 +304,23 @@ void restore_unopt_stack(stack_map_t *sm, call_stack_state_t *state)
     // This is used to index `locations`.
     int loc_index = 0;
     // Restore all the stacks on the call stack
-    for (int i = 0; i < state->depth; ++i) {
+    for (size_t i = 0; i + 1 < state->depth; ++i) {
         // Get the unoptimized stack map record associated with this frame.
         stack_map_record_t *unopt_rec = stmap_get_map_record(sm,
                 ~state->frames[i].record.patchpoint_id);
+        uint64_t bp = (uint64_t)state->frames[i].bp;
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects.
         // Records are considered in pairs (the counter is incremented by 2),
         // because each record at an odd index in the array represents the
         // size of the previous record.
-        for (int j = 0; j < unopt_rec->num_locations - 1; j += 2) {
+        for (size_t j = 0; j + 1 < unopt_rec->num_locations; j += 2) {
             location_type type = unopt_rec->locations[j].kind;
             uint64_t opt_location_addr = locations[loc_index++];
+            fprintf(stderr, "Loc index is %lu\n", loc_index);
             uint64_t loc_size = *(uint64_t *)locations[loc_index++];
             if (type == DIRECT) {
-                uint64_t unopt_addr = (uint64_t)state->frames[i].bp +
-                    unopt_rec->locations[j].offset;
+                uint64_t unopt_addr = bp + unopt_rec->locations[j].offset;
                 memcpy((void *)unopt_addr, (void *)opt_location_addr,
                         loc_size);
             } else if (type == REGISTER) {
@@ -343,5 +344,14 @@ void restore_register_state(call_stack_state_t *state, uint64_t r[])
     for (size_t i = 0; i < 16; ++i) {
         r[i] = (uint64_t)state->frames[0].registers[i];
     }
+}
+
+frame_t* alloc_empty_frames(size_t num_frames)
+{
+    frame_t *frames = calloc(num_frames, sizeof(frame_t));
+    for (size_t i = 0; i < num_frames; ++i) {
+        frames[i].registers = calloc(16, sizeof(unw_word_t));
+    }
+    return frames;
 }
 
