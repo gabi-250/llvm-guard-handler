@@ -13,7 +13,7 @@ def setup_module(module):
 @pytest.mark.parametrize('name', support.get_test_files(__file__))
 def test_output(name):
     test_dir = support.get_test_dir(__file__)
-    bin_path = '{test_dir}/{name}'.format(test_dir=test_dir, name=name)
+    bin_path = os.path.join(test_dir, name)
     p = subprocess.run(bin_path, shell=True, stdout=subprocess.PIPE)
     clang_bin = '{path}_clang_'.format(path=bin_path)
     clang_compile = 'clang -o {clang_bin} {path}.c'.format(clang_bin=clang_bin,

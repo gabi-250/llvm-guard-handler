@@ -15,7 +15,7 @@
 // XXX These currently need to be global, since they need to be visible to
 // jump.s
 uint64_t addr = 0;
-uint64_t r[16];
+uint64_t r[REGISTER_COUNT];
 
 /*
  * The guard failure handler. This is the callback passed to the `patchpoint`
@@ -55,24 +55,31 @@ void __guard_failure(int64_t sm_id)
     if (!unopt_size_rec || !opt_size_rec) {
         errx(1, "Record not found.");
     }
-
+    // Are there any inlined functions?
+    bool inlined = 0;
     // Get the call stack state.
-    call_stack_state_t *state = get_call_stack_state(cursor, context);
+    call_stack_state_t *state = get_call_stack_state(cursor);
     collect_map_records(state, sm);
     // Get the end address of the function in which a guard failed.
     void *end_addr = get_sym_end(binary_path, (void *)opt_size_rec->fun_addr);
     uint64_t callback_ret_addr = (uint64_t) __builtin_return_address(0);
-
+    // The first frame
+    frame_t *fail_frame = alloc_empty_frames(1);
+    fail_frame->record = *opt_rec;
+    fail_frame->size = unopt_size_rec->stack_size;
     // Check if the guard failed in an inlined function or not.
     if (callback_ret_addr >= opt_size_rec->fun_addr &&
         callback_ret_addr < (uint64_t)end_addr) {
         fprintf(stderr, "A guard failed, but not in an inlined func\n");
+        // The first stack map record to be stored is the one associated with the
+        // patchpoint which triggered the guard failure (so it needs to be added
+        // separately).
+        insert_frames(state, 0, fail_frame, 1);
     } else {
         fprintf(stderr, "A guard failed in an inlined function.\n");
+        inlined = 1;
         exit(1);
     }
-    append_record(state, *opt_rec);
-
     // Restore the stack state.
     restore_unopt_stack(sm, state);
     restore_register_state(state, r);
@@ -83,4 +90,3 @@ void __guard_failure(int64_t sm_id)
     free(binary_path);
     asm volatile("jmp jmp_to_addr");
 }
-
