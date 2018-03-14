@@ -235,6 +235,10 @@ struct CheckPointPass: public FunctionPass {
           nextPatchpointID = ~stackMaps[twinFun][lastIndex];
         }
     }
+    if (stackMaps.find(funName) == stackMaps.end() &&
+        stackMaps.find(getTwinName(funName)) == stackMaps.end()) {
+      ++nextPatchpointID;
+    }
     stackMaps[funName].push_back(nextPatchpointID);
     return nextPatchpointID;
   }
