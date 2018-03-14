@@ -71,6 +71,24 @@ stack_map_record_t* stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id
     return NULL;
 }
 
+stack_map_record_t* stmap_get_map_record_in_func(stack_map_t *sm,
+                                                 uint64_t patchpoint_id,
+                                                 uint64_t fun_addr)
+{
+    fprintf(stderr, "looking for %d in %p\n", patchpoint_id, fun_addr);
+    for (size_t i = 0; i < sm->num_rec; ++i) {
+        if (sm->stk_map_records[i].patchpoint_id == patchpoint_id) {
+            stack_size_record_t *size_rec =
+                stmap_get_size_record(sm, sm->stk_map_records[i].index);
+            if (size_rec->fun_addr == fun_addr) {
+                fprintf(stderr, "Found %d\n", sm->stk_map_records[i].patchpoint_id);
+                return &sm->stk_map_records[i];
+            }
+        }
+    }
+    return NULL;
+}
+
 void assert_valid_reg_num(unw_regnum_t reg)
 {
     if (reg < UNW_X86_64_RAX || reg > UNW_X86_64_R15) {
@@ -201,32 +219,6 @@ stack_map_record_t* stmap_first_rec_after_addr(stack_map_t *sm, uint64_t addr)
         }
     }
     return NULL;
-}
-
-void stmap_print_liveouts(stack_map_t *stack_map, uint64_t *regs)
-{
-    for (size_t i = 0; i < stack_map->num_rec; ++i) {
-        stack_map_record_t rec = stack_map->stk_map_records[i];
-        if (rec.num_liveouts) {
-            printf("Record %lu:\n", rec.patchpoint_id);
-        }
-        for (size_t j = 0; j < rec.num_liveouts; ++j) {
-            liveout_t liveout = rec.liveouts[j];
-            uint16_t reg_num = liveout.dwarf_reg_num;
-            assert_valid_reg_num(reg_num);
-            printf("\t[REGISTER %hu] Liveout %zu, value is %p\n", reg_num, j,
-                   (void *)regs[reg_num]);
-        }
-    }
-}
-
-void stmap_print_size_records(stack_map_t *sm)
-{
-    for (size_t i = 0; i < sm->num_func; ++i) {
-        stack_size_record_t rec = sm->stk_size_records[i];
-        printf("Stack size record %lu: addr: %p, stack size %lu, num recs %lu\n",
-               i, (void *)rec.fun_addr, rec.stack_size, rec.record_count);
-    }
 }
 
 void stmap_free(stack_map_t *sm)
