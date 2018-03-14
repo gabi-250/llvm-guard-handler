@@ -75,7 +75,6 @@ stack_map_record_t* stmap_get_map_record_in_func(stack_map_t *sm,
                                                  uint64_t patchpoint_id,
                                                  uint64_t fun_addr)
 {
-    fprintf(stderr, "looking for %d in %p\n", patchpoint_id, fun_addr);
     for (size_t i = 0; i < sm->num_rec; ++i) {
         if (sm->stk_map_records[i].patchpoint_id == patchpoint_id) {
             stack_size_record_t *size_rec =

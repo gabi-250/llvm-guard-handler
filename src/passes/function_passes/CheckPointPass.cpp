@@ -237,6 +237,9 @@ struct CheckPointPass: public FunctionPass {
     }
     if (stackMaps.find(funName) == stackMaps.end() &&
         stackMaps.find(getTwinName(funName)) == stackMaps.end()) {
+      // This ensures `stackmap`/`patchpoint` calls which belong to the same
+      // function have consecutive identifiers. When a new function is found,
+      // `nextPatchpointID` has to be incremented.
       ++nextPatchpointID;
     }
     stackMaps[funName].push_back(nextPatchpointID);
