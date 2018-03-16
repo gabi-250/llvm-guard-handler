@@ -61,7 +61,6 @@ struct CheckPointPass: public FunctionPass {
   }
 
   virtual bool runOnFunction(Function &fun) {
-    vector<BasicBlock::iterator> iterators;
     Module *mod = fun.getParent();
     StringRef funName = fun.getName();
     outs() << "Running CheckPointPass on function: " << funName << '\n';
@@ -70,13 +69,14 @@ struct CheckPointPass: public FunctionPass {
     // The callback to call when a guard fails.
     Constant* guardHandler = ConstantExpr::getBitCast(
         mod->getFunction(GUARD_FUN_NAME), i8ptr_t);
+    vector <Instruction *> callInsts;
     for (auto &bb : fun) {
       for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
         // XXX This is where the guard must fail (an arbitrary instruction in
         // the "more_indirection" function).
         if (funName.endswith("more_indirection") && isa<ReturnInst>(it)) {
           LLVMContext &ctx = bb.getContext();
-          IRBuilder<> builder(&bb, it);
+          IRBuilder<> builder(&bb, it->getIterator());
           uint64_t PPID = getNextPatchpointID(funName);
           // The first two arguments of a stackmap/patchpoint intrinsic call
           // are the unique identifier of the call, and the number of bytes
@@ -115,7 +115,7 @@ struct CheckPointPass: public FunctionPass {
             // This is a function call. A guard might fail inside the called
             // function, so its return address must be recorded.
             uint64_t PPID = getNextPatchpointID(funName);
-            IRBuilder<> builder(&bb, ++it);
+            IRBuilder<> builder(it->getNextNode());
             auto args = vector<Value*> { builder.getInt64(PPID),
                                          builder.getInt32(13)
                                        };
@@ -171,6 +171,8 @@ struct CheckPointPass: public FunctionPass {
                 }
               }
               ReplaceInstWithInst(&oldCallInst, callInst);
+              callInsts.push_back(callInst);
+              it = callInst->getIterator();
             } else {
               // The function is not an __unopt_ function. Insert a  stackmap
               // call after the current call instruction to record the return
@@ -179,16 +181,18 @@ struct CheckPointPass: public FunctionPass {
               // versions of the functions.
               auto intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_stackmap);
-              auto call_inst = builder.CreateCall(intrinsic, args);
+              builder.CreateCall(intrinsic, args);
+              callInsts.push_back(it->getNextNode());
             }
-            iterators.push_back(it);
           }
         }
       }
     }
-    for (auto &it: iterators) {
-      BasicBlock *bb = (*it).getParent();
-      bb->splitBasicBlock(it);
+    for (auto inst: callInsts) {
+      BasicBlock *bb = inst->getParent();
+      if (inst->getNextNode()) {
+        bb->splitBasicBlock(inst->getNextNode());
+      }
     }
     return true;
   }
