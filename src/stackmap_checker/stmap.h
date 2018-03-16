@@ -100,6 +100,15 @@ void stmap_free(stack_map_t *sm);
 stack_map_record_t* stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id);
 
 /*
+ * Return the stack map record which corresponds to the patchpoint call with the
+ * specified ID. The returned record will correspond to a patchpoint call in
+ * the function which starts at `fun_addr`, or NULL if there is no such record.
+ */
+stack_map_record_t* stmap_get_map_record_in_func(stack_map_t *sm,
+                                                 uint64_t patchpoint_id,
+                                                 uint64_t fun_addr);
+
+/*
  * Return the stack size record associated with the specified stack map record.
  *
  * Each function which contains a call to llvm.experimental.stackmaps or to
@@ -140,7 +149,5 @@ void assert_valid_reg_num(unw_regnum_t reg);
  */
 stack_map_record_t* stmap_get_last_record(stack_map_t *sm,
                                           stack_size_record_t target_size_rec);
-void stmap_print_stack_size_records(stack_map_t *);
-void stmap_print_liveouts(stack_map_t *rec, uint64_t *regs);
 
 #endif // STMAP_H
