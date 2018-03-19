@@ -98,15 +98,17 @@ struct LiveVariablesPass: public FunctionPass {
               auto userInst = cast<Instruction>(*user);
               if (DT.dominates(&instr, userInst)) {
                 args.push_back(&*it);
-                auto instSize = builder.getInt64(8); // XXX default size
-                // The runtime may need to copy more than 8 bytes starting at
-                // this location. We can store the size of the object being
-                // allocated in the stack map.
+                Type *t = nullptr;
+                // The runtime may need to copy an arbitrary number of bytes
+                // starting from this location. We can store the size of the
+                // object being allocated in the stack map.
                 if (isa<AllocaInst>(it)) {
-                  Type *t = cast<AllocaInst>(*it).getAllocatedType();
-                  instSize = builder.getInt64(
-                      dataLayout.getTypeAllocSize(t));
+                  t = cast<AllocaInst>(*it).getAllocatedType();
+                } else {
+                  t = it->getType();
                 }
+                Value *instSize =
+                  builder.getInt64(dataLayout.getTypeAllocSize(t));
                 // Also insert the size of the recorded location to know how
                 // many bytes to copy at runtime.
                 args.push_back(instSize);
