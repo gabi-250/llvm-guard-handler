@@ -7,7 +7,7 @@
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
-#include "Utils/Utils.h"
+#include "Utils.h"
 
 #define UNOPT_PREFIX "__unopt_"
 #define GUARD_FUN "__guard_failure"

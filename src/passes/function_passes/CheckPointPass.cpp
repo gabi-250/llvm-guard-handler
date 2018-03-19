@@ -69,7 +69,6 @@ struct CheckPointPass: public FunctionPass {
     // The callback to call when a guard fails.
     Constant* guardHandler = ConstantExpr::getBitCast(
         mod->getFunction(GUARD_FUN_NAME), i8ptr_t);
-    vector <Instruction *> callInsts;
     for (auto &bb : fun) {
       for (BasicBlock::iterator it = bb.begin(); it != bb.end(); ++it) {
         // XXX This is where the guard must fail (an arbitrary instruction in
@@ -171,7 +170,6 @@ struct CheckPointPass: public FunctionPass {
                 }
               }
               ReplaceInstWithInst(&oldCallInst, callInst);
-              callInsts.push_back(callInst);
               it = callInst->getIterator();
             } else {
               // The function is not an __unopt_ function. Insert a  stackmap
@@ -182,16 +180,9 @@ struct CheckPointPass: public FunctionPass {
               auto intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_stackmap);
               builder.CreateCall(intrinsic, args);
-              callInsts.push_back(it->getNextNode());
             }
           }
         }
-      }
-    }
-    for (auto inst: callInsts) {
-      BasicBlock *bb = inst->getParent();
-      if (inst->getNextNode()) {
-        bb->splitBasicBlock(inst->getNextNode());
       }
     }
     return true;

@@ -16,7 +16,7 @@
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/IR/Dominators.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
-#include "Utils/Utils.h"
+#include "Utils.h"
 
 #define UNOPT_PREFIX "__unopt_"
 
