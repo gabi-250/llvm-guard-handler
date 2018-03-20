@@ -4,6 +4,7 @@
 #include <llvm/Pass.h>
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
@@ -66,6 +67,7 @@ struct CheckPointPass: public FunctionPass {
     outs() << "Running CheckPointPass on function: " << funName << '\n';
     Type *i8ptr_t = PointerType::getUnqual(
         IntegerType::getInt8Ty(mod->getContext()));
+    vector <Instruction *> callInsts;
     // The callback to call when a guard fails.
     Constant* guardHandler = ConstantExpr::getBitCast(
         mod->getFunction(GUARD_FUN_NAME), i8ptr_t);
@@ -118,6 +120,7 @@ struct CheckPointPass: public FunctionPass {
             auto args = vector<Value*> { builder.getInt64(PPID),
                                          builder.getInt32(13)
                                        };
+            callInsts.push_back(&*it);
             if (funName.startswith(UNOPT_PREFIX)) {
               // The current function is an unoptimized one, so we must replace
               // all calls inside it with patchpoint calls. The originally
@@ -184,6 +187,18 @@ struct CheckPointPass: public FunctionPass {
           }
         }
       }
+    }
+
+    for (auto inst: callInsts) {
+      IRBuilder<> builder(inst);
+      FunctionType *funType = FunctionType::get(builder.getVoidTy(), false);
+      // Insert empty `asm` blocks.
+      InlineAsm *inlineAsm = InlineAsm::get(funType,
+                                            "",      /* AsmString */
+                                            ""       /* Constraints */,
+                                            true     /* hasSideEffects */,
+                                            false    /* isAlignStack */);
+      builder.CreateCall(inlineAsm, {});
     }
     return true;
   }
