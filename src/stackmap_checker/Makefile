@@ -1,4 +1,5 @@
 CC := clang
+CFLAGS := -g
 LLC := ../llvm/build/bin/llc
 CPOINTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libCheckPointPass.so
 UNOPTPASS := -Xclang -load -Xclang ../passes/build/function_passes/libUnoptimizedCopyPass.so
@@ -25,6 +26,7 @@ bytecode: $(PREFIX)%.c
 $(TARGET_OBJS): $$(basename $$@).ll
 	$(LLC) -filetype=obj $<
 	$(LLC) -filetype=obj $<
+	rm .stack_resizer_*
 
 %.ll: %.c
 	$(CC) $(PASSFLAGS) -S -emit-llvm $< -O3

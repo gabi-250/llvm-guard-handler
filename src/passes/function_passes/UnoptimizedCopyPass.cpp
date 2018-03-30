@@ -48,7 +48,6 @@ struct UnoptimizedCopyPass: public FunctionPass {
   virtual bool runOnFunction(Function &fun) {
     auto funName = fun.getName();
     outs() << "Running UnoptCopyPass on function: " << funName << '\n';
-    // XXX Inlining has to be disabled for all functions.
     fun.addFnAttr(llvm::Attribute::NoInline);
     if (funName.startswith(UNOPT_PREFIX)) {
       Module *mod = fun.getParent();
@@ -64,20 +63,22 @@ struct UnoptimizedCopyPass: public FunctionPass {
             Function *calledFun = call.getCalledFunction();
             if (getPatchpointType(calledFun).isPatchpoint()) {
               Value *callback = call.getArgOperand(2)->stripPointerCasts();
-              Function *callbackFunction = cast<Function>(callback);
-              StringRef calledFunName = callbackFunction->getName();
-              if (calledFunName != GUARD_FUN &&
-                  !calledFunName.startswith(UNOPT_PREFIX)) {
-                // This is not an unoptimized function -> call the unoptimized
-                // version of this function instead.
-                Function *newFun =
-                  mod->getFunction(UNOPT_PREFIX + calledFunName.str());
-                if (newFun) {
-                  Type *i8ptr_t = PointerType::getUnqual(
-                      IntegerType::getInt8Ty(mod->getContext()));
-                  Constant* newCallback =
-                    ConstantExpr::getBitCast(newFun, i8ptr_t);
-                  call.setArgOperand(2, newCallback);
+              if (callback && isa<Function>(callback)) {
+                Function *callbackFunction = cast<Function>(callback);
+                StringRef calledFunName = callbackFunction->getName();
+                if (calledFunName != GUARD_FUN &&
+                    !calledFunName.startswith(UNOPT_PREFIX)) {
+                  // This is not an unoptimized function -> call the unoptimized
+                  // version of this function instead.
+                  Function *newFun =
+                    mod->getFunction(UNOPT_PREFIX + calledFunName.str());
+                  if (newFun) {
+                    Type *i8ptr_t = PointerType::getUnqual(
+                        IntegerType::getInt8Ty(mod->getContext()));
+                    Constant* newCallback =
+                      ConstantExpr::getBitCast(newFun, i8ptr_t);
+                    call.setArgOperand(2, newCallback);
+                  }
                 }
               }
             }
