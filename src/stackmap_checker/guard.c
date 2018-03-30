@@ -34,6 +34,7 @@ void __guard_failure(int64_t sm_id)
     unw_cursor_t saved_cursor = cursor;
     // Read the stack map section.
     void *stack_map_addr = get_addr(binary_path, ".llvm_stackmaps");
+    free(binary_path);
     if (!stack_map_addr) {
         errx(1, ".llvm_stackmaps section not found. Exiting.\n");
     }
@@ -61,7 +62,7 @@ void __guard_failure(int64_t sm_id)
     call_stack_state_t *state = get_call_stack_state(cursor);
     collect_map_records(state, sm);
     // Get the end address of the function in which a guard failed.
-    void *end_addr = get_sym_end(binary_path, (void *)opt_size_rec->fun_addr);
+    void *end_addr = (void *)get_sym_end(opt_size_rec->fun_addr);
     uint64_t callback_ret_addr = (uint64_t) __builtin_return_address(0);
     // The first frame
     frame_t *fail_frame = alloc_empty_frames(1);
@@ -87,6 +88,5 @@ void __guard_failure(int64_t sm_id)
     addr = unopt_size_rec->fun_addr + unopt_rec->instr_offset;
     stmap_free(sm);
     free_call_stack_state(state);
-    free(binary_path);
     asm volatile("jmp jmp_to_addr");
 }
