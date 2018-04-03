@@ -6,6 +6,7 @@
 
 #define MAX_CALL_STACK_DEPTH 256
 #define REGISTER_COUNT 16
+#define ADDR_SIZE sizeof(void *)
 
 
 /*

@@ -12,20 +12,25 @@
 #include <libunwind.h>
 
 
-// XXX These currently need to be global, since they need to be visible to
-// jump.s
+// These need to be global, since they need to be visible to jump.s
 uint64_t addr = 0;
 uint64_t r[REGISTER_COUNT];
 uint64_t restored_bp = 0;
 uint64_t restored_stack_size = 0;
 
+// The stack of jump_inlined will be overwritten, but
+// restored_start_addr must be freed.
+uint64_t restored_start_addr = 0;
+// restored_total_size is needed to memset the old stack to 0,
+// after the stack of jump_inlined is overwritten.
+uint64_t restored_total_size = 0;
+
 /*
  * If necessary, increase the size of the stack according to `seg`, and then
  * jump to the `restore_inlined` label.
  */
-void jump_to_inlined(call_stack_state_t *state, restored_segment_t seg)
+void jump_inlined(call_stack_state_t *state, restored_segment_t seg)
 {
-    uint64_t first_size = state->frames[0].size - 8;
     // rbp and rsp must be set correctly, so the new 'frames' appear to have
     // always existed on the call stack.
     uint64_t real_rsp;
@@ -34,19 +39,22 @@ void jump_to_inlined(call_stack_state_t *state, restored_segment_t seg)
         state->frames[state->depth - 1].registers[UNW_X86_64_RBP];
     if (main_bp - seg.total_size < real_rsp) {
         // Grow the stack.
-        jump_to_inlined(state, seg);
+        jump_inlined(state, seg);
     } else {
+        uint64_t first_size = state->frames[0].size - ADDR_SIZE;
         restored_stack_size = first_size;
         restored_bp = main_bp + first_size;
         uint64_t cur_bp = restored_bp;
         for (size_t i = 1; i + 1 < state->depth; ++i) {
-            cur_bp += state->frames[i].size + 8;
+            cur_bp += state->frames[i].size + ADDR_SIZE;
             *(uint64_t *)state->frames[i - 1].bp = cur_bp;
         }
-        memcpy((void *)main_bp, (void *)seg.start_addr, seg.total_size);
-        memset((void *)seg.start_addr, 0, seg.total_size);
-        free((void *)seg.start_addr);
         free_call_stack_state(state);
+        restored_start_addr = seg.start_addr;
+        restored_total_size = seg.total_size;
+        memcpy((void *)main_bp, (void *)seg.start_addr, seg.total_size);
+        memset((void *)restored_start_addr, 0, restored_total_size);
+        free((void *)restored_start_addr);
         asm volatile("jmp restore_inlined");
     }
 }
@@ -105,12 +113,9 @@ void __guard_failure(int64_t sm_id)
     frame_t *fail_frame = alloc_empty_frames(1);
     fail_frame->record = fail_frame->real_record = *opt_rec;
     fail_frame->size = unopt_size_rec->stack_size;
-    fail_frame->registers = calloc(REGISTER_COUNT, sizeof(unw_word_t));
     fail_frame->real_bp = fail_frame->bp = state->frames[0].real_bp;
     memcpy(fail_frame->registers, state->frames[0].registers,
            REGISTER_COUNT * sizeof(unw_word_t));
-    stack_size_record_t *s =
-        stmap_get_size_record(sm, state->frames[0].record.index);
     uint64_t first_ret_addr = opt_rec->instr_offset + opt_size_rec->fun_addr;
     fail_frame->ret_addr = first_ret_addr;
     // Check if the guard failed in an inlined function or not.
@@ -172,8 +177,6 @@ void __guard_failure(int64_t sm_id)
         seg.total_size            = get_total_stack_size(state);
         seg.start_addr            = (uint64_t)malloc(seg.total_size);
         insert_real_addresses(state, seg);
-        // make sure frame[0] contains the register state of the function in
-        // which the other functions were inlined (main for example)
     }
     // Restore the stack and register state.
     restore_unopt_stack(sm, state);
@@ -182,7 +185,7 @@ void __guard_failure(int64_t sm_id)
     addr = unopt_size_rec->fun_addr + unopt_rec->instr_offset;
     stmap_free(sm);
     if (inlined) {
-        jump_to_inlined(state, seg);
+        jump_inlined(state, seg);
     } else {
         free_call_stack_state(state);
         asm volatile("jmp jmp_to_addr");

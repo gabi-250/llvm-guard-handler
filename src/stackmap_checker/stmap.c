@@ -167,7 +167,8 @@ stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
     return NULL;
 }
 
-stack_size_record_t* stmap_get_size_record_in_func(stack_map_t *sm, uint64_t addr)
+stack_size_record_t* stmap_get_size_record_in_func(stack_map_t *sm,
+                                                   uint64_t addr)
 {
     for (size_t i = 0; i < sm->num_func; ++i) {
         if (sm->stk_size_records[i].fun_addr == addr) {

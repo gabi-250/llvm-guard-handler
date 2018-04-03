@@ -112,6 +112,7 @@ struct LiveVariablesPass: public FunctionPass {
                 // Also insert the size of the recorded location to know how
                 // many bytes to copy at runtime.
                 args.push_back(instSize);
+                break;
               }
             }
           }

@@ -46,9 +46,11 @@ call_stack_state_t* get_call_stack_state(unw_cursor_t cursor)
         frames[depth - 1].registers = get_registers(cursor);
         // Store the address of the return address.
         frames[depth - 1].ret_addr =
-            (uint64_t)(frames[depth - 1].registers[UNW_X86_64_RBP] + 8);
+            (uint64_t)(frames[depth - 1].registers[UNW_X86_64_RBP]
+                       + ADDR_SIZE);
         frames[depth - 1].stored_ret_addr =
-            *(uint64_t *)(frames[depth - 1].registers[UNW_X86_64_RBP] + 8);
+            *(uint64_t *)(frames[depth - 1].registers[UNW_X86_64_RBP]
+                          + ADDR_SIZE);
         // Store the current BP.
         frames[depth - 1].bp = frames[depth - 1].real_bp =
             frames[depth - 1].registers[UNW_X86_64_RBP];
@@ -170,17 +172,17 @@ bool collect_inlined_frames(call_stack_state_t *state, stack_map_t *sm)
         uint64_t end_addr = get_sym_end(size_record->fun_addr);
         uint64_t callback_ret_addr =
             record.instr_offset + size_record->fun_addr;
-        // Use the stored return address, as the address of the return address
-        // now points to a different address (it is overwritten by
-        // `collect_map_records`.
+        // Use the stored return address, instead of reading it from the
+        // stack (`state_copy->frames[i].ret_addr` is the *address*
+        // of the return address). Since `collect_map_records`
+        // overwrites the return addresses on the stack, it is necessary
+        // to use the stored value instead.
         uint64_t ret_addr = state_copy->frames[i].stored_ret_addr;
-        if (ret_addr >= size_record->fun_addr &&
-            ret_addr < (uint64_t)end_addr) {
-            fprintf(stderr, "Regular frame!\n");
-        } else {
-            fprintf(stderr, "Inlined! %d\n", i);
-            // Frame with index i does not return in the function of frame with
-            // index i + 1, so it must correspond to an inlined frame.
+        if (!(ret_addr >= size_record->fun_addr &&
+            ret_addr < (uint64_t)end_addr)) {
+            // Frame with index i does not return in the function associated
+            // with the frame at index i + 1, so it corresponds to an
+            // inlined function.
             inlined = 1;
             uint64_t next_addr = ret_addr + PATCHPOINT_CALL_SIZE + 1;
             // Get the size record of the function in which inlining happened.
@@ -250,10 +252,8 @@ call_stack_state_t* get_restored_state(stack_map_t *sm,
             stmap_get_size_record(sm, unopt_rec->index);
         ++state->depth;
         state->frames = realloc(state->frames, state->depth * sizeof(frame_t));
-        state->frames[state->depth - 1].registers =
-            calloc(REGISTER_COUNT, sizeof(unw_word_t));
-        // XXX ret_addr does not hold the address of the return address
-        // should be stored in a separate array
+        // ret_addr does not hold the address of the return address
+        // if inlined = 1 (it stores the return address instead).
         state->frames[state->depth - 1].ret_addr =
             unopt_rec->instr_offset + unopt_size_rec->fun_addr + 13;
         opt_ret_addr = rec->instr_offset + size_rec->fun_addr + 1;
@@ -272,25 +272,25 @@ void insert_real_addresses(call_stack_state_t *state, restored_segment_t seg)
     // Now add the return addresses and saved base pointers to the new 'stack'.
     // Start with the low addresses: `cur_bp` is the BP of the last function
     // callled
-    char *cur_bp = (char *)seg.start_addr + state->frames[0].size - 8;
+    char *cur_bp = (char *)seg.start_addr + state->frames[0].size - ADDR_SIZE;
     for (size_t i = 0; i + 1 < state->depth; ++i) {
         state->frames[i].bp = (uint64_t)cur_bp;
         if (state->frames[i + 1].inlined) {
-            *(uint64_t *)(cur_bp + 8) = state->frames[i + 1].ret_addr;
+            *(uint64_t *)(cur_bp + ADDR_SIZE) = state->frames[i + 1].ret_addr;
         } else {
-            *(uint64_t *)(cur_bp + 8) =
+            *(uint64_t *)(cur_bp + ADDR_SIZE) =
                 *(uint64_t *)state->frames[i + 1].ret_addr;
         }
-        state->frames[i].ret_addr = (uint64_t)(cur_bp + 8);
+        state->frames[i].ret_addr = (uint64_t)(cur_bp + ADDR_SIZE);
         if (i > 0) {
             *(uint64_t *)state->frames[i - 1].bp = state->frames[i].bp;
         }
-        cur_bp += state->frames[i + 1].size + 8;
+        cur_bp += state->frames[i + 1].size + ADDR_SIZE;
     }
     // Link the restored stack frames with the frame of main.
     uint64_t main_bp =
         state->frames[state->depth - 1].registers[UNW_X86_64_RBP];
-    uint64_t main_ret_addr = (uint64_t)(main_bp + 8);
+    uint64_t main_ret_addr = (uint64_t)(main_bp + ADDR_SIZE);
     *(uint64_t *)state->frames[state->depth - 1].bp = main_bp;
     *(uint64_t *)state->frames[state->depth - 1].ret_addr =
         *(uint64_t *)main_ret_addr;
@@ -301,7 +301,6 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
 {
     size_t num_locations = 0;
     size_t loc_index = 0;
-    size_t new_size = 0;
     // Each record corresponds to a stack frame.
     for (size_t i = 0; i + 1 < state->depth; ++i) {
         stack_map_record_t opt_rec = state->frames[i].real_record;
@@ -310,9 +309,7 @@ size_t get_locations(stack_map_t *sm, call_stack_state_t *state,
         assert(opt_rec.num_locations == unopt_rec->num_locations);
         uint64_t real_bp = state->frames[i + 1].real_bp;
         num_locations += unopt_rec->num_locations;
-        new_size = num_locations * sizeof(uint64_t);
-        *locs = (uint64_t *)realloc(*locs, new_size);
-
+        *locs = (uint64_t *)realloc(*locs, num_locations * sizeof(uint64_t));
         // Populate the stack of the optimized function with the values the
         // unoptimized function expects
         for (size_t j = 0; j + 1 < opt_rec.num_locations; j += 2) {
@@ -424,8 +421,8 @@ uint64_t get_total_stack_size(call_stack_state_t *state)
 {
     uint64_t total_size = 0;
     for (size_t i = 0; i + 1 < state->depth; ++i) {
-        // Add 8 to account for the return address.
-        total_size += state->frames[i].size + 8;
+        // Add ADDR_SIZE to account for the size of the return address.
+        total_size += state->frames[i].size + ADDR_SIZE;
     }
     return total_size;
 }

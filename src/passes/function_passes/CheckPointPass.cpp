@@ -126,7 +126,6 @@ struct CheckPointPass: public FunctionPass {
             auto args = vector<Value*> { builder.getInt64(PPID),
                                          builder.getInt32(13)
                                        };
-            callInsts.push_back(&*it);
             if (funName.startswith(UNOPT_PREFIX)) {
               // The current function is an unoptimized one, so we must replace
               // all calls inside it with patchpoint calls. The originally
@@ -180,6 +179,7 @@ struct CheckPointPass: public FunctionPass {
               }
               ReplaceInstWithInst(&oldCallInst, callInst);
               it = callInst->getIterator();
+              callInsts.push_back(&*it);
             } else {
               // The function is not an __unopt_ function. Insert a  stackmap
               // call after the current call instruction to record the return
@@ -189,12 +189,12 @@ struct CheckPointPass: public FunctionPass {
               auto intrinsic = Intrinsic::getDeclaration(
                   mod, Intrinsic::experimental_stackmap);
               builder.CreateCall(intrinsic, args);
+              callInsts.push_back(&*it);
             }
           }
         }
       }
     }
-
     for (auto inst: callInsts) {
       IRBuilder<> builder(inst);
       FunctionType *funType = FunctionType::get(builder.getVoidTy(), false);
