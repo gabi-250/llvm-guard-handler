@@ -101,10 +101,16 @@ struct CheckPointPass: public FunctionPass {
             intrinsic = Intrinsic::getDeclaration(
                 mod, Intrinsic::experimental_patchpoint_void);
           } else {
-            // The function is not optimized -> insert a stackmap call instead
-            // of a patchpoint call.
+            // The function is not optimized -> insert a patchpoint call with
+            // no callback
+            auto callback = builder.CreateIntToPtr(builder.getInt64(0),
+                                                   builder.getInt8PtrTy());
+            args.insert(args.end(),
+                        { callback,              // no callback
+                          builder.getInt32(0),   // the callback has no arguments
+                        });
             intrinsic = Intrinsic::getDeclaration(
-                mod, Intrinsic::experimental_stackmap);
+                mod, Intrinsic::experimental_patchpoint_void);
           }
           auto callInst = builder.CreateCall(intrinsic, args);
         } else if (isa<CallInst>(it)) {
