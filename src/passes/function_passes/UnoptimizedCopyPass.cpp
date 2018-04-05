@@ -48,7 +48,6 @@ struct UnoptimizedCopyPass: public FunctionPass {
   virtual bool runOnFunction(Function &fun) {
     auto funName = fun.getName();
     outs() << "Running UnoptCopyPass on function: " << funName << '\n';
-    fun.addFnAttr(llvm::Attribute::NoInline);
     if (funName.startswith(UNOPT_PREFIX)) {
       Module *mod = fun.getParent();
       for (auto &bb : fun) {

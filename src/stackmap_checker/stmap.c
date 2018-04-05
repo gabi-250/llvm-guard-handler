@@ -4,6 +4,7 @@
 #include <string.h>
 #include <err.h>
 #include "stmap.h"
+#include "utils.h"
 
 stack_map_t* stmap_create(uint8_t *start_addr)
 {
@@ -71,17 +72,40 @@ stack_map_record_t* stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id
     return NULL;
 }
 
+stack_map_record_t* stmap_get_map_record_after_addr(stack_map_t *sm,
+                                                    uint64_t patchpoint_id,
+                                                    uint64_t addr)
+{
+    for (size_t i = 0; i < sm->num_rec; ++i) {
+        stack_map_record_t rec = sm->stk_map_records[i];
+        if (rec.patchpoint_id == patchpoint_id) {
+            stack_size_record_t *size_rec = stmap_get_size_record(sm, i);
+            if (!size_rec) {
+                errx(1, "No stack map after call!. Exiting.\n");
+            }
+            uint64_t last_addr = get_sym_end(size_rec->fun_addr);
+            if (size_rec->fun_addr + rec.instr_offset >= addr
+                && addr >= size_rec->fun_addr && addr < last_addr) {
+                 return &sm->stk_map_records[i];
+            }
+        }
+    }
+    return NULL;
+}
+
 stack_map_record_t* stmap_get_map_record_in_func(stack_map_t *sm,
                                                  uint64_t patchpoint_id,
                                                  uint64_t fun_addr)
 {
     for (size_t i = 0; i < sm->num_rec; ++i) {
-        if (sm->stk_map_records[i].patchpoint_id == patchpoint_id) {
-            stack_size_record_t *size_rec =
-                stmap_get_size_record(sm, sm->stk_map_records[i].index);
+        stack_map_record_t rec = sm->stk_map_records[i];
+        if (rec.patchpoint_id == patchpoint_id) {
+            stack_size_record_t *size_rec = stmap_get_size_record(sm, i);
+            if (!size_rec) {
+                errx(1, "No stack map after call!. Exiting.\n");
+            }
             if (size_rec->fun_addr == fun_addr) {
-                fprintf(stderr, "Found %d\n", sm->stk_map_records[i].patchpoint_id);
-                return &sm->stk_map_records[i];
+                 return &sm->stk_map_records[i];
             }
         }
     }
@@ -95,32 +119,33 @@ void assert_valid_reg_num(unw_regnum_t reg)
     }
 }
 
-void stmap_get_location_value(stack_map_t *sm, location_t loc,
-        uint64_t *regs, void *frame_addr, void **loc_value, uint64_t loc_size)
+void* stmap_get_location_value(stack_map_t *sm, location_t loc, uint64_t *regs,
+                               void *frame_addr, uint64_t loc_size)
 {
     uint64_t addr = 0;
-    *loc_value = malloc(loc_size);
+    void *loc_value = malloc(loc_size);
     switch (loc.kind) {
         case REGISTER:
             assert_valid_reg_num(loc.dwarf_reg_num);
-            memcpy(*loc_value, &regs[loc.dwarf_reg_num], loc_size);
+            memcpy(loc_value, &regs[loc.dwarf_reg_num], loc_size);
             break;
         case DIRECT:
             addr = (uint64_t)frame_addr + loc.offset;
-            memcpy(*loc_value, (void *)addr, loc_size);
+            memcpy(loc_value, (void *)addr, loc_size);
             break;
         case INDIRECT:
             errx(1, "Not implemented.");
             break;
         case CONST_INDEX:
-            memcpy(*loc_value, &sm->constants[loc.offset], loc_size);
+            memcpy(loc_value, &sm->constants[loc.offset], loc_size);
             break;
         case CONSTANT:
-            memcpy(*loc_value, &loc.offset, loc_size);
+            memcpy(loc_value, &loc.offset, loc_size);
             break;
         default:
             errx(1, "Unknown location - %u.\nExiting.\n", loc.kind);
     }
+    return loc_value;
 }
 
 stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
@@ -137,6 +162,17 @@ stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx)
             return &sm->stk_size_records[i];
         } else {
             record_count += rec.record_count;
+        }
+    }
+    return NULL;
+}
+
+stack_size_record_t* stmap_get_size_record_in_func(stack_map_t *sm,
+                                                   uint64_t addr)
+{
+    for (size_t i = 0; i < sm->num_func; ++i) {
+        if (sm->stk_size_records[i].fun_addr == addr) {
+            return &sm->stk_size_records[i];
         }
     }
     return NULL;
@@ -170,7 +206,7 @@ stack_map_pos_t* stmap_get_unopt_return_addr(stack_map_t *sm, uint64_t return_ad
     stack_map_record_t* call_rec =
         stmap_first_rec_after_addr(sm, return_addr);
     if (!call_rec) {
-        errx(1, "Call record not found. Exiting.\n");
+        return NULL;
     }
     stack_map_record_t *unopt_call_rec =
         stmap_get_map_record(sm, ~call_rec->patchpoint_id);

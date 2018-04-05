@@ -95,9 +95,23 @@ stack_map_t* stmap_create(uint8_t *start_addr);
 void stmap_free(stack_map_t *sm);
 
 /*
- * Return the stack map record which corresponds to the specified patchpoint.
+ * Return a stack map record which corresponds to the specified patchpoint.
+ *
+ * Important: as functions may be inlined, there may be multiple records with
+ * the same ID. This does not happen for '__unopt_' functions, as all
+ * optimizations are disabled for them.
  */
 stack_map_record_t* stmap_get_map_record(stack_map_t *sm, uint64_t patchpoint_id);
+
+/*
+ * Return the stack map record which corresponds to the patchpoint call with the
+ * specified ID. The returned record will correspond to a patchpoint call
+ * located at an address greater than or equal to `addr`, or NULL if there
+ * is no such record.
+ */
+stack_map_record_t* stmap_get_map_record_after_addr(stack_map_t *sm,
+                                                    uint64_t patchpoint_id,
+                                                    uint64_t addr);
 
 /*
  * Return the stack map record which corresponds to the patchpoint call with the
@@ -119,11 +133,17 @@ stack_map_record_t* stmap_get_map_record_in_func(stack_map_t *sm,
 stack_size_record_t* stmap_get_size_record(stack_map_t *sm, uint64_t sm_rec_idx);
 
 /*
+ * Return the stack size record which corresponds to the function that starts at
+ * the specified address.
+ */
+stack_size_record_t* stmap_get_size_record_in_func(stack_map_t *sm,
+                                                   uint64_t addr);
+
+/*
  * Compute the value of the specified location.
  */
-void stmap_get_location_value(stack_map_t *sm, location_t loc,
-                              uint64_t *regs, void *frame_addr,
-                              void **loc_value, uint64_t loc_size);
+void* stmap_get_location_value(stack_map_t *sm, location_t loc, uint64_t *regs,
+                               void *frame_addr, uint64_t loc_size);
 
 /*
  * Return the stack map/size record pair which describes the return address in an

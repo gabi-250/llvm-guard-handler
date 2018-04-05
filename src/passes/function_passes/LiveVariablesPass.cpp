@@ -96,7 +96,7 @@ struct LiveVariablesPass: public FunctionPass {
             // `instr`, so it is live across `instr`.
             if (isa<Instruction>(*user)) {
               auto userInst = cast<Instruction>(*user);
-              if (DT.dominates(&instr, userInst)) {
+              if (!DT.dominates(userInst, &instr)) {
                 args.push_back(&*it);
                 Type *t = nullptr;
                 // The runtime may need to copy an arbitrary number of bytes
@@ -112,6 +112,7 @@ struct LiveVariablesPass: public FunctionPass {
                 // Also insert the size of the recorded location to know how
                 // many bytes to copy at runtime.
                 args.push_back(instSize);
+                break;
               }
             }
           }

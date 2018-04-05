@@ -34,6 +34,7 @@ bytecode: $(TRACE_PREFIX)%.c
 $(TARGET_OBJS): $$(basename $$@).ll
 	$(LLC) -filetype=obj $<
 	$(LLC) -filetype=obj $<
+	rm .stack_resizer_*
 
 trace_marked.ll: trace_marked.c
 	$(CC) $(PASSFLAGS) $(MARKPASS) -S -emit-llvm $< -O3
