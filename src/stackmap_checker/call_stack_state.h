@@ -52,8 +52,6 @@ typedef struct CallStackState {
 typedef struct RestoredStackSegment {
     uint64_t start_addr;
     uint64_t total_size;
-    uint64_t main_bp;
-    uint64_t rsp;
 } restored_segment_t;
 
 /*
