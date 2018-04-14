@@ -10,7 +10,6 @@ PASSFLAGS := $(CPOINTPASS) $(LIVEVARPASS) $(UNOPTPASS) $(BARRIERPASS)
 STMAP_CHECKER_DIR := $(ROOT_DIR)stackmap_checker/
 OBJ_NAMES := utils.o stmap.o jump.o guard.o call_stack_state.o
 OBJS := $(foreach obj, $(OBJ_NAMES), $(STMAP_CHECKER_DIR)$(obj))
-TRACE_PREFIX := trace
 EXECUTABLES := $(basename $(wildcard trace*.c))
 CLANG_COMPILED := $(foreach obj, $(EXECUTABLES), $(obj)_clang_)
 TARGET_OBJS := $(foreach bin, $(EXECUTABLES), $(bin).o)
@@ -25,9 +24,6 @@ stackmap_checker:
 .SECONDEXPANSION:
 $(EXECUTABLES): $$@.o
 	$(CC) -o $@ $(OBJS) $@.o -O3 -lunwind
-
-bytecode: $(TRACE_PREFIX)%.c
-	$(CC) $(PASSFLAGS) -S -emit-llvm $< -O3
 
 $(TARGET_OBJS): $$(basename $$@).ll
 	$(LLC) -filetype=obj $<
