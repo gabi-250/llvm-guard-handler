@@ -117,14 +117,14 @@ struct LiveVariablesPass: public FunctionPass {
             }
           }
         } else if (isa<ReturnInst>(it) && it->getNumOperands() > 0) {
-            ReturnInst &retInst = cast<ReturnInst>(*it);
-            auto retValue = retInst.getReturnValue();
-            if (isa<Constant>(retValue)) {
-              args.push_back(retValue);
-              auto instSize = builder.getInt64(
-                  dataLayout.getTypeAllocSize(retValue->getType()));
-              args.push_back(instSize);
-            }
+          ReturnInst &retInst = cast<ReturnInst>(*it);
+          auto retValue = retInst.getReturnValue();
+          if (isa<Constant>(retValue)) {
+            args.push_back(retValue);
+            auto instSize = builder.getInt64(
+                dataLayout.getTypeAllocSize(retValue->getType()));
+            args.push_back(instSize);
+          }
         }
       }
     }
